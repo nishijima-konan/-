@@ -57,7 +57,6 @@
     let currentMode = null;
     let autoMode = false;
     let codeReader = null;
-    let selectedDeviceId = null;
     let scanReady = false;
 
     try {
@@ -102,25 +101,25 @@
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
         try {
-            if (!selectedDeviceId) {
-                const videoInputDevices = await codeReader.listVideoInputDevices();
-                const backCamera = videoInputDevices.find(device => 
-                    device.label.toLowerCase().includes('back') || 
-                    device.label.toLowerCase().includes('environment')
-                );
-                selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
-            }
-
+            // facingMode: "environment" で背面カメラを、さらに高解像度を同時に強制指定
             const constraints = {
                 video: {
-                    deviceId: { exact: selectedDeviceId },
+                    facingMode: { exact: "environment" },
                     width: { ideal: 1920 },
                     height: { ideal: 1080 },
                     focusMode: { ideal: "continuous" }
                 }
             };
 
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (e) {
+                // 万が一 exact 指定でエラーが出る古い機種のためのセーフティネット
+                constraints.video.facingMode = "environment";
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+            }
+
             const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
 
