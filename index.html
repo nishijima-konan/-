@@ -40,7 +40,6 @@
   #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
 </style>
 
-<!-- jsQRライブラリの読み込み -->
 <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
 
 </head>
@@ -86,18 +85,34 @@ let autoMode = false;
 let stream = null;
 let scanning = false;
 
-// --- QRデータ解析 ---
+// --- QRデータ解析（エラーで止まらないように安全ガードを追加） ---
 function parseQR1(text) {
-  const parts = text.split(",", 5);
-  return { partNo: parts[0].trim(), qty: parts[4].trim() };
+  try {
+    const parts = text.split(",", 5);
+    // カンマ区切りになっていない場合はテキストそのまま全体を部品番号とする
+    if (parts.length < 5) {
+      return { partNo: text.trim(), qty: "1" };
+    }
+    return { partNo: parts[0].trim(), qty: parts[4].trim() };
+  } catch (e) {
+    return { partNo: text.trim(), qty: "1" };
+  }
 }
 
 function parseQR2(text) {
-  const parts = text.trim().split(/\s+/);
-  return {
-    partNo: parts[1] + " " + parts[2],
-    qty: parts[11].replace(/^0+/, "")
-  };
+  try {
+    const parts = text.trim().split(/\s+/);
+    // 空白区切りで要素が足りない場合はテキストそのまま全体を部品番号とする
+    if (parts.length < 12) {
+      return { partNo: text.trim(), qty: "1" };
+    }
+    return {
+      partNo: parts[1] + " " + parts[2],
+      qty: parts[11].replace(/^0+/, "")
+    };
+  } catch (e) {
+    return { partNo: text.trim(), qty: "1" };
+  }
 }
 
 function checkQR1(ref, qr1) { return ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
@@ -108,7 +123,7 @@ function vibOK() { navigator.vibrate(100); }
 function vibNG() { navigator.vibrate([200, 100, 200]); }
 function vibStart() { navigator.vibrate(50); }
 
-// --- カメラ起動（パナソニック同等の最速設定） ---
+// --- カメラ起動 ---
 async function startScan(mode) {
   currentMode = mode;
   document.getElementById('status').textContent = mode + " 読み取り中…";
@@ -118,7 +133,6 @@ async function startScan(mode) {
 
   if (!stream) {
     try {
-      // 余計な制約をなくし、スマホの背面カメラの標準性能（HD解像度）をストレートに引き出す
       stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -128,7 +142,6 @@ async function startScan(mode) {
       });
       video.srcObject = stream;
 
-      // オートフォーカスを「継続モード」にする命令（端末が対応していれば有効化）
       setTimeout(async () => {
         const track = stream.getVideoTracks()[0];
         const capabilities = track.getCapabilities();
@@ -148,7 +161,7 @@ async function startScan(mode) {
   scanLoop();
 }
 
-// --- 高速スキャンループ（無駄な計算を一切しない） ---
+// --- 高速スキャンループ ---
 function scanLoop() {
   if (!scanning) return;
 
@@ -170,11 +183,9 @@ function scanLoop() {
     overlay.height = video.videoHeight;
   }
 
-  // カメラ映像をそのまま描画してjsQRに渡す
   ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   
-  // jsQRの最高パフォーマンスで解析
   const code = jsQR(imgData.data, canvas.width, canvas.height);
 
   octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -226,6 +237,7 @@ function handleScan(text) {
   if (!text) return;
   scanning = false; // 連続読み込みを防ぐために一度止める
 
+  // ① 標準QR1登録
   if (currentMode === "qr1ref") {
     refQR1 = parseQR1(text);
     document.getElementById("qr1refText").textContent = "QR1標準: " + text;
@@ -235,6 +247,7 @@ function handleScan(text) {
     return;
   }
 
+  // ① 標準QR2登録
   if (currentMode === "qr2ref") {
     refQR2 = parseQR2(text);
     document.getElementById("qr2refText").textContent = "QR2標準: " + text;
@@ -244,6 +257,7 @@ function handleScan(text) {
     return;
   }
 
+  // ② 自動照合
   if (autoMode) {
     if (currentMode === "qr1") {
       const qr1 = parseQR1(text);
