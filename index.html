@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -16,14 +17,21 @@
         .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+        .cam-ctrl { background: #f0f0f0; border: 1px solid #bbb; color: #333; font-size: 14px; padding: 6px; margin: 5px 0; }
     </style>
-    <!-- 世界標準の非常に安定したQR読取ライブラリに変更 -->
     <script src="https://unpkg.com/html5-qrcode"></script>
 </head>
 <body>
 
     <h1>QRラベル判定</h1>
     <div id="status">停止中</div>
+
+    <!-- カメラ切り替え用のレスキューボタン -->
+    <div class="box" style="background:#fff9e6; border-color:#ffe0b2;">
+        <div class="label" style="color:#b78103; font-weight:bold;">⚠️ カメラが止まる・映らない場合の切り替え</div>
+        <div id="cam-info" style="font-size:12px; margin-bottom:5px; color:#666;">カメラを読み込み中...</div>
+        <button class="cam-ctrl" onclick="switchCamera()">次のカメラに切り替え</button>
+    </div>
 
     <div class="box">
         <div class="label">① 標準QR登録</div>
@@ -40,7 +48,6 @@
         <div id="result"></div>
     </div>
 
-    <!-- 映像表示エリア -->
     <div id="reader"></div>
 
     <div class="box">
@@ -55,6 +62,58 @@
     let autoMode = false;
     let html5QrCode = null;
     let scanReady = false;
+
+    // カメラリスト管理用
+    let backCameras = [];
+    let currentCamIndex = 0;
+
+    // 最初に利用可能な背面カメラをすべて洗い出す
+    async function initCameraList() {
+        try {
+            const devices = await Html5Qrcode.getCameras();
+            if (devices && devices.length > 0) {
+                // ラベル名に front や user が含まれないものを背面カメラとして抽出
+                backCameras = devices.filter(device => {
+                    const label = device.label.toLowerCase();
+                    return !label.includes('front') && !label.includes('user') && !label.includes('内カメラ');
+                });
+                // 万が一背面っぽいのが見つからなければ全カメラを対象にする
+                if (backCameras.length === 0) backCameras = devices;
+                
+                updateCamInfoDisplay();
+            } else {
+                document.getElementById('cam-info').textContent = "カメラが見つかりません";
+            }
+        } catch (e) {
+            console.error("Camera list error", e);
+            document.getElementById('cam-info').textContent = "カメラ一覧を取得できませんでした";
+        }
+    }
+
+    function updateCamInfoDisplay() {
+        if(backCameras.length > 0) {
+            document.getElementById('cam-info').textContent = `候補カメラ数: ${backCameras.length}つ（現在: ${currentCamIndex + 1}つ目を選択中）`;
+        }
+    }
+
+    // ボタンを押したときに次のレンズへ強制的に切り替える関数
+    async function switchCamera() {
+        if (backCameras.length <= 1) {
+            alert("切り替え可能な他の背面カメラが見つかりません。");
+            return;
+        }
+        currentCamIndex = (currentCamIndex + 1) % backCameras.length;
+        updateCamInfoDisplay();
+        
+        // 何か動いていれば再起動
+        if (currentMode) {
+            const saveMode = currentMode;
+            await stopScan();
+            setTimeout(() => { startScan(saveMode); }, 300);
+        } else {
+            alert("「読み取る」または「照合開始」を押してから切り替えてください。");
+        }
+    }
 
     function parseQR1(text) {
         if (!text) return { partNo: "", qty: "" };
@@ -92,37 +151,36 @@
         
         html5QrCode = new Html5Qrcode("reader");
 
-        // 背面カメラを確実に高精細・連続フォーカスで起動する設定
         const config = {
             fps: 15,
             qrbox: function(width, height) {
                 return { width: Math.floor(width * 0.8), height: Math.floor(height * 0.8) };
-            },
-            experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true
             }
         };
 
         try {
+            // リストがまだ空なら取得を試みる
+            if(backCameras.length === 0) {
+                await initCameraList();
+            }
+
+            // 選択されているカメラIDを使用。なければ environment（標準背面）
+            const cameraIdOrFacingMode = (backCameras.length > 0 && backCameras[currentCamIndex]) 
+                ? { deviceId: { exact: backCameras[currentCamIndex].id } } 
+                : { facingMode: "environment" };
+
             await html5QrCode.start(
-                { facingMode: "environment" }, 
+                cameraIdOrFacingMode, 
                 config,
-                (decodedText) => {
-                    if (scanReady) {
-                        handleScan(decodedText);
-                    }
-                },
-                (errorMessage) => {
-                    // スキャン中の毎フレームのエラー（QRが見つからない等）は無視して継続
-                }
+                (decodedText) => { if (scanReady) handleScan(decodedText); },
+                (errorMessage) => {}
             );
 
-            // カメラ起動直後の誤動作防止フラグ
             setTimeout(() => { scanReady = true; }, 1000);
 
         } catch (err) {
             console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "Camera Error";
+            document.getElementById('status').textContent = "Camera Error (停止)";
         }
     }
 
@@ -211,6 +269,9 @@
         const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, " ");
         log.textContent = `[${time}] ${type} → ${result} : ${cleanText}\n` + log.textContent;
     }
+
+    // 画面を開いた段階で一度カメラ一覧を仕込む
+    window.addEventListener('DOMContentLoaded', initCameraList);
 </script>
 </body>
 </html>
