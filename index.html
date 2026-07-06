@@ -19,7 +19,7 @@
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
-    <!-- 爆速で読めた元のZXingライブラリ -->
+    <!-- 一瞬で読めた時の高性能ライブラリ(ZXing) -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -90,33 +90,6 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // 最適な背面カメラIDを徹底探索して取得する関数
-    async function getBestBackCameraId() {
-        try {
-            // まずカメラ使用の権限を得るために一度ダミーで叩く
-            const initialStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-            initialStream.getTracks().forEach(track => track.stop()); // すぐ止める
-
-            // 全デバイスの一覧を取得
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-            // キーワードから背面カメラを厳密に抽出
-            const backCams = videoDevices.filter(d => {
-                const label = d.label.toLowerCase();
-                return !label.includes('front') && !label.includes('user') && !label.includes('内') && !label.includes('sub');
-            });
-
-            if (backCams.length > 0) {
-                // 複数ある場合は、広角メインレンズになりやすい最初のもの、または特定の通常レンズを優先
-                return backCams[0].deviceId;
-            }
-        } catch (e) {
-            console.error("Camera detection error:", e);
-        }
-        return null; // 見つからなければシステム既定値に委ねる
-    }
-
     async function startScan(mode) {
         currentMode = mode;
         scanReady = false;
@@ -128,18 +101,23 @@
         const octx = overlay.getContext("2d");
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
-        try {
-            const backCamId = await getBestBackCameraId();
-            
-            // 条件指定（デバイスIDがあればそれを最優先、なければ環境既定の背面）
-            const constraints = {
-                video: backCamId 
-                    ? { deviceId: { exact: backCamId } }
-                    : { facingMode: "environment" }
-            };
+        // ブラウザのロック制限を壊すため、毎回「背面カメラ」を完全指定してストリームを毎回新規生成
+        const constraints = {
+            video: {
+                facingMode: { ideal: "environment" }
+            }
+        };
 
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        try {
+            // 過去の古いストリームの残骸を強制的に完全リセット
             const videoElement = document.getElementById('video');
+            if (videoElement.srcObject) {
+                videoElement.srcObject.getTracks().forEach(track => track.stop());
+                videoElement.srcObject = null;
+            }
+
+            // 新しく背面指定でカメラ権限を要求・取得
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoElement.srcObject = stream;
 
             setTimeout(() => {
@@ -155,7 +133,7 @@
 
         } catch (err) {
             console.error("Camera error: ", err);
-            // exact指定で弾かれた場合の最終セーフティネット
+            // 失敗時のセーフティ（緩い背面指定）
             try {
                 const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
                 document.getElementById('video').srcObject = fallbackStream;
