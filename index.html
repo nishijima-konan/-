@@ -96,12 +96,13 @@
         
         stopStreamOnly();
 
-        // 高密度QR1を識別しやすくするため、可能な限り「高解像度」をカメラに要求する設定
+        // フルHD画質要求 ＋ オートフォーカス連続駆動の設定
         const constraints = {
             video: { 
                 facingMode: "environment",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                focusMode: "continuous"
             }
         };
 
@@ -110,9 +111,10 @@
             localStream = await navigator.mediaDevices.getUserMedia(constraints);
             videoElement.srcObject = localStream;
 
+            // スマホのカメラレンズにピントを合わせるための猶予を少し延長
             setTimeout(() => {
                 scanReady = true;
-            }, 600);
+            }, 800);
 
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             animationFrameId = requestAnimationFrame(scanLoop);
@@ -134,7 +136,7 @@
             
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             
-            // 【最重要】inversionAttemptsをdontInvertから「both」に変更し、高精度解析モードを有効化
+            // 最高精度の両面解析モード
             const code = jsQR(imageData.data, imageData.width, imageData.height, {
                 inversionAttempts: "both",
             });
