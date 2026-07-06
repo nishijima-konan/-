@@ -16,21 +16,17 @@
         #reader-wrapper { width: 100%; max-width: 380px; margin: 10px auto; overflow: hidden; border-radius: 8px; border: 2px solid #ccc; background: #000; }
         #reader { width: 100%; }
         
-        /* 【超重要】邪魔な四角い枠や、ライブラリの自動表示を物理的に完全消去 */
+        /* 枠線や余計なレイヤーをCSS側でも徹底的に非表示化 */
         #reader__scan_region, 
-        #reader__scan_region div, 
-        div[style*="border"], 
+        #reader__scan_region div,
+        div[id*="scan_region"],
         .qrbox { 
             border: none !important; 
             box-shadow: none !important;
         }
-        #reader__scan_region img {
-            display: none !important;
-        }
         #reader__scan_region video { 
             object-fit: cover !important; 
             width: 100% !important;
-            height: 100% !important;
         }
 
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
@@ -38,7 +34,7 @@
         .registered { color: #0066cc; font-weight: bold; margin-top: 4px; font-size: 14px; }
         #log { font-size: 13px; margin-top: 8px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; background: #fff; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
     </style>
-    <!-- 最強のQR読み取りライブラリ Html5Qrcode -->
+    <!-- 安定版ライブラリ -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 </head>
 <body>
@@ -113,39 +109,23 @@
 
         html5QrcodeScanner = new Html5Qrcode("reader");
         
-        // 【極限シンプル化】余計な機能・制限をすべて排除し、生のカメラスピードと画質を優先
+        // エラー回避のため極限までシンプルにしたカメラ標準設定
         const config = {
-            fps: 30,
-            experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true
-            }
-        };
-
-        const cameraConfig = {
-            facingMode: "environment",
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
+            fps: 25,
+            qrbox: undefined // 枠を完全に作らせない設定（画面の100%を自動スキャン）
         };
 
         try {
+            // 最もトラブルの少ない標準の背面カメラ呼び出し
             await html5QrcodeScanner.start(
-                cameraConfig,
+                { facingMode: "environment" },
                 config,
                 (text) => { handleScanResult(text); },
                 (errorMessage) => {}
             );
         } catch (err) {
             console.error("Camera error: ", err);
-            try {
-                await html5QrcodeScanner.start(
-                    { facingMode: "environment" },
-                    { fps: 30 },
-                    (text) => { handleScanResult(text); },
-                    (errorMessage) => {}
-                );
-            } catch (retryErr) {
-                document.getElementById('status').textContent = "カメラ起動エラー";
-            }
+            document.getElementById('status').textContent = "カメラ起動エラー。再読み込みしてください。";
         }
     }
 
