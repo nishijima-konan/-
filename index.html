@@ -58,7 +58,7 @@
     let scanReady = false;
     let localStream = null;
     let animationFrameId = null;
-    let isProcessing = false; // 連打・衝突防止フラグ
+    let isProcessing = false; 
 
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -90,7 +90,7 @@
     async function startScan(mode) {
         currentMode = mode;
         scanReady = false;
-        isProcessing = false; // リセット
+        isProcessing = false; 
         document.getElementById('status').textContent = mode + " 読み取り中…";
         vibStart();
         
@@ -132,10 +132,9 @@
                 inversionAttempts: "dontInvert",
             });
 
-            // QRが見つかったら、即座にフラグを立てて二重処理を防ぐ
             if (code && code.data) {
-                isProcessing = true; 
-                handleScan(code.data);
+                isProcessing = true; // 二重処理ロック
+                handleScan(code.data); // 先にデータ処理へ
                 return; 
             }
         }
@@ -179,63 +178,66 @@
             return;
         }
 
-        // 先にカメラのストリームだけを確実に止める（画面ハング防止）
-        stopStreamOnly();
+        // 【最重要】カメラを止める前に、すべての文字処理と画面書き換えを「100%完了」させる
+        if (currentMode === "qr1ref") {
+            refQR1 = parseQR1(text);
+            document.getElementById("qr1refText").textContent = "QR1標準登録完了";
+            document.getElementById('status').textContent = "QR1登録完了";
+            vibOK();
+            addLog("QR1標準", "OK", text);
+            currentMode = null;
+            stopStreamOnly(); // すべて書き終えたので最後に安全にカメラを閉じる
+            return;
+        }
+        if (currentMode === "qr2ref") {
+            refQR2 = parseQR2(text);
+            document.getElementById("qr2refText").textContent = "QR2標準登録完了";
+            document.getElementById('status').textContent = "QR2登録完了";
+            vibOK();
+            addLog("QR2標準", "OK", text);
+            currentMode = null;
+            stopStreamOnly(); // 同上
+            return;
+        }
 
-        // わずかに遅延を入れて、ブラウザの表示処理を安全に行う
-        setTimeout(() => {
-            if (currentMode === "qr1ref") {
-                refQR1 = parseQR1(text);
-                document.getElementById("qr1refText").textContent = "QR1標準登録完了";
-                document.getElementById('status').textContent = "QR1登録完了";
-                vibOK();
-                addLog("QR1標準", "OK", text);
-                currentMode = null;
+        if (autoMode) {
+            if (currentMode === "qr1") {
+                const qr1 = parseQR1(text);
+                const ok = checkQR1(refQR1, qr1);
+                showResult(ok, "QR1");
+                addLog("QR1", ok ? "OK" : "NG", text);
+                
+                stopStreamOnly(); // 一度書き込みが終わったのでカメラを閉じて次へ
+
+                if (ok) {
+                    vibOK();
+                    currentMode = "qr2";
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
+                } else {
+                    vibNG();
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
+                }
                 return;
             }
-            if (currentMode === "qr2ref") {
-                refQR2 = parseQR2(text);
-                document.getElementById("qr2refText").textContent = "QR2標準登録完了";
-                document.getElementById('status').textContent = "QR2登録完了";
-                vibOK();
-                addLog("QR2標準", "OK", text);
-                currentMode = null;
+            if (currentMode === "qr2") {
+                const qr2 = parseQR2(text);
+                const ok = checkQR2(refQR2, qr2);
+                showResult(ok, "QR2");
+                addLog("QR2", ok ? "OK" : "NG", text);
+                
+                stopStreamOnly(); // 一度書き込みが終わったのでカメラを閉じて次へ
+
+                if (ok) {
+                    vibOK();
+                    currentMode = "qr1";
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
+                } else {
+                    vibNG();
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
+                }
                 return;
             }
-
-            if (autoMode) {
-                if (currentMode === "qr1") {
-                    const qr1 = parseQR1(text);
-                    const ok = checkQR1(refQR1, qr1);
-                    showResult(ok, "QR1");
-                    addLog("QR1", ok ? "OK" : "NG", text);
-                    if (ok) {
-                        vibOK();
-                        currentMode = "qr2";
-                        setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
-                    } else {
-                        vibNG();
-                        setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
-                    }
-                    return;
-                }
-                if (currentMode === "qr2") {
-                    const qr2 = parseQR2(text);
-                    const ok = checkQR2(refQR2, qr2);
-                    showResult(ok, "QR2");
-                    addLog("QR2", ok ? "OK" : "NG", text);
-                    if (ok) {
-                        vibOK();
-                        currentMode = "qr1";
-                        setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
-                    } else {
-                        vibNG();
-                        setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
-                    }
-                    return;
-                }
-            }
-        }, 100);
+        }
     }
 
     function showResult(ok, label) {
