@@ -19,6 +19,7 @@
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
+    <!-- 1番スムーズに読めた時のZXingライブラリ -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -100,37 +101,27 @@
         const octx = overlay.getContext("2d");
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
-        // 高画質(1280x720)かつ、連続オートフォーカスを理想値(ideal)としてリクエスト
+        // 機種エラーを起こさない最も安全でシンプルな「背面カメラ指定」
         const constraints = {
             video: {
-                facingMode: { ideal: "environment" },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
-                focusMode: { ideal: "continuous" }
+                facingMode: "environment"
             }
         };
 
         try {
             const videoElement = document.getElementById('video');
             if (videoElement.srcObject) {
-                videoElement.srcObject.getTracks().forEach(track => track.stop());
+                const tracks = videoElement.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
                 videoElement.srcObject = null;
             }
 
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoElement.srcObject = stream;
 
-            // 機種によっては起動後にフォーカスを当てる命令を上書きする
             setTimeout(() => {
-                try {
-                    const track = stream.getVideoTracks()[0];
-                    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-                        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(e => console.log(e));
-                    }
-                } catch(e) { console.log("Focus override optional error:", e); }
                 scanReady = true;
-            }, 1000);
+            }, 800);
 
             codeReader.decodeFromStream(stream, 'video', (result, err) => {
                 if (result && scanReady) {
@@ -141,19 +132,7 @@
 
         } catch (err) {
             console.error("Camera error: ", err);
-            try {
-                const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-                document.getElementById('video').srcObject = fallbackStream;
-                setTimeout(() => { scanReady = true; }, 1000);
-                codeReader.decodeFromStream(fallbackStream, 'video', (result, err) => {
-                    if (result && scanReady) {
-                        if (result.resultPoints) drawBox(result.resultPoints);
-                        handleScan(result.text);
-                    }
-                });
-            } catch(e) {
-                document.getElementById('status').textContent = "Camera Error (停止)";
-            }
+            document.getElementById('status').textContent = "エラーのため停止";
         }
     }
 
