@@ -101,28 +101,20 @@
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
         try {
-            // facingMode: "environment" で背面カメラを、さらに高解像度を同時に強制指定
+            // 画質の指定を理想値（ideal）のみにして、エラーを回避しつつ背面を強制
             const constraints = {
                 video: {
-                    facingMode: { exact: "environment" },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    focusMode: { ideal: "continuous" }
+                    facingMode: "environment",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 }
             };
 
-            let stream;
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-            } catch (e) {
-                // 万が一 exact 指定でエラーが出る古い機種のためのセーフティネット
-                constraints.video.facingMode = "environment";
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-            }
-
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
 
+            // カメラ起動直後の判定誤動作を防ぐため1秒待つ
             setTimeout(() => {
                 scanReady = true;
             }, 1000);
