@@ -126,16 +126,28 @@
         console.error("ZXing error", e);
     }
 
-    // JKUUL用のパース処理（スペース区切り・12番目が数量の規則）
+    // JKUUL用のパース処理（スペース区切り・数量可変対応版）
     function parseJKUUL(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
+        
+        // 連続するスペースでバラバラに分解
         const parts = text.trim().split(/\s+/);
-        if (parts.length < 12) return { partNo: text.trim(), qty: "1", raw: text };
-        return {
-            partNo: parts[1] + " " + parts[2],
-            qty: parts[11].replace(/^0+/, ""),
-            raw: text
-        };
+        
+        // 【品番の抽出】2番目の塊（インデックス1）から「2306」の手前までを結合
+        let partNoParts = [];
+        for (let i = 1; i < parts.length; i++) {
+            if (parts[i] === "2306") break;
+            partNoParts.push(parts[i]);
+        }
+        // もし上手く取れなかった場合のセーフティ
+        const partNo = partNoParts.length > 0 ? partNoParts.join(" ") : parts[0];
+
+        // 【数量の抽出】頭に0が5〜7個並び、後ろが1〜3桁の数字（合計8桁）を探す
+        // 例: 00000020 (20個), 00000180 (180個), 00000005 (5個)
+        const qtyMatch = text.match(/00000\d{3}/);
+        const qty = qtyMatch ? String(parseInt(qtyMatch[0], 10)) : "1";
+
+        return { partNo: partNo, qty: qty, raw: text };
     }
 
     // 社内ラベル用のパース処理（カンマ区切りの規則）
