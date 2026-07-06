@@ -36,8 +36,9 @@
         .db-table th { background-color: #eee; }
         .del-btn { background: #dc3545; color: white; border: none; padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; width: auto; margin: 0; }
         
-        /* 現在の照合ターゲット表示 */
-        .target-display { background: #e8f5e9; border: 2px solid #4caf50; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 14px; }
+        /* 照合データのリアルタイム表示 */
+        .target-display { background: #e8f5e9; border: 2px solid #4caf50; padding: 10px; border-radius: 6px; margin-bottom: 8px; font-size: 14px; }
+        .current-display { background: #f3e5f5; border: 2px solid #9c27b0; padding: 10px; border-radius: 6px; font-size: 14px; }
     </style>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
@@ -64,10 +65,13 @@
         <button onclick="cancelRegistration()" style="background: #dc3545; color: white; border: none; padding: 8px; font-size: 14px;">登録を中断して戻る</button>
     </div>
 
-    <!-- 現在の照合元データ表示エリア -->
-    <div id="target-box" class="box hidden">
-        <div class="label">🎯 現在の照合元（比較ベースとなるJKUUL）</div>
+    <!-- 照合データのモニタリング表示エリア -->
+    <div id="monitor-box" class="box hidden">
+        <div class="label">🎯 現在の照合元（JKUUL基準データ）</div>
         <div id="target-info" class="target-display">未読込</div>
+        
+        <div class="label" style="margin-top: 10px;">🔍 直前にスキャンした社内ラベルのデータ</div>
+        <div id="current-info" class="current-display">スキャン待ち...</div>
     </div>
 
     <!-- カメラ表示エリア -->
@@ -122,16 +126,8 @@
         console.error("ZXing error", e);
     }
 
-    // JKUUL用のパース処理
+    // JKUUL用のパース処理（スペース区切り・12番目が数量の規則）
     function parseJKUUL(text) {
-        if (!text) return { partNo: "", qty: "", raw: "" };
-        const parts = text.split(",", 5);
-        if (parts.length < 5) return { partNo: text.trim(), qty: "1", raw: text };
-        return { partNo: parts[0].trim(), qty: parts[4].trim(), raw: text };
-    }
-
-    // 社内ラベル用のパース処理
-    function parseInternal(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.trim().split(/\s+/);
         if (parts.length < 12) return { partNo: text.trim(), qty: "1", raw: text };
@@ -140,6 +136,14 @@
             qty: parts[11].replace(/^0+/, ""),
             raw: text
         };
+    }
+
+    // 社内ラベル用のパース処理（カンマ区切りの規則）
+    function parseInternal(text) {
+        if (!text) return { partNo: "", qty: "", raw: "" };
+        const parts = text.split(",", 5);
+        if (parts.length < 5) return { partNo: text.trim(), qty: "1", raw: text };
+        return { partNo: parts[0].trim(), qty: parts[4].trim(), raw: text };
     }
 
     function createKey(parsedObj) {
@@ -154,10 +158,11 @@
     async function startMainScan() {
         currentPhase = "WAIT_JKUUL_FIRST";
         document.getElementById('status').textContent = "【ステップ1】最初に「JKUUL」を一度だけ読み取ってください";
-        document.getElementById("target-box").classList.remove("hidden");
+        document.getElementById("monitor-box").classList.remove("hidden");
         document.getElementById("target-info").textContent = "⏳ JKUULスキャン待ち...";
         document.getElementById("target-info").style.background = "#fff3e0";
         document.getElementById("target-info").style.borderColor = "#ff9800";
+        document.getElementById("current-info").textContent = "スキャン待ち...";
         vibStart();
         if (!isStreamActive) {
             await startCameraStream();
@@ -288,6 +293,9 @@
             const internalData = parseInternal(text);
             const internalKey = createKey(internalData);
 
+            // 画面に「今スキャンした社内ラベル」のパース結果を表示
+            document.getElementById("current-info").innerHTML = `<strong>品番:</strong> ${internalData.partNo} <br> <strong>数量:</strong> ${internalData.qty}`;
+
             // データベースに登録があるか確認
             const registeredJKUUL = pairMaster[internalKey];
 
@@ -356,7 +364,7 @@
         }
         if(codeReader) codeReader.reset();
         document.getElementById('status').textContent = "停止しました";
-        document.getElementById("target-box").classList.add("hidden");
+        document.getElementById("monitor-box").classList.add("hidden");
         clearOverlay();
     }
 
