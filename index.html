@@ -96,8 +96,13 @@
         
         stopStreamOnly();
 
+        // 高密度QR1を識別しやすくするため、可能な限り「高解像度」をカメラに要求する設定
         const constraints = {
-            video: { facingMode: "environment" }
+            video: { 
+                facingMode: "environment",
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
         };
 
         try {
@@ -128,13 +133,15 @@
             ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
             
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            
+            // 【最重要】inversionAttemptsをdontInvertから「both」に変更し、高精度解析モードを有効化
             const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                inversionAttempts: "dontInvert",
+                inversionAttempts: "both",
             });
 
             if (code && code.data) {
-                isProcessing = true; // 二重処理ロック
-                handleScan(code.data); // 先にデータ処理へ
+                isProcessing = true; 
+                handleScan(code.data); 
                 return; 
             }
         }
@@ -178,7 +185,6 @@
             return;
         }
 
-        // 【最重要】カメラを止める前に、すべての文字処理と画面書き換えを「100%完了」させる
         if (currentMode === "qr1ref") {
             refQR1 = parseQR1(text);
             document.getElementById("qr1refText").textContent = "QR1標準登録完了";
@@ -186,7 +192,7 @@
             vibOK();
             addLog("QR1標準", "OK", text);
             currentMode = null;
-            stopStreamOnly(); // すべて書き終えたので最後に安全にカメラを閉じる
+            stopStreamOnly(); 
             return;
         }
         if (currentMode === "qr2ref") {
@@ -196,7 +202,7 @@
             vibOK();
             addLog("QR2標準", "OK", text);
             currentMode = null;
-            stopStreamOnly(); // 同上
+            stopStreamOnly(); 
             return;
         }
 
@@ -207,7 +213,7 @@
                 showResult(ok, "QR1");
                 addLog("QR1", ok ? "OK" : "NG", text);
                 
-                stopStreamOnly(); // 一度書き込みが終わったのでカメラを閉じて次へ
+                stopStreamOnly(); 
 
                 if (ok) {
                     vibOK();
@@ -225,7 +231,7 @@
                 showResult(ok, "QR2");
                 addLog("QR2", ok ? "OK" : "NG", text);
                 
-                stopStreamOnly(); // 一度書き込みが終わったのでカメラを閉じて次へ
+                stopStreamOnly(); 
 
                 if (ok) {
                     vibOK();
