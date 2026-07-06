@@ -19,7 +19,6 @@
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
-    <!-- 強力なライブラリZXing -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -59,12 +58,12 @@
     let autoMode = false;
     let codeReader = null;
     let selectedDeviceId = null;
-    let scanReady = false; // 起動直後の誤判定を防ぐフラグ
+    let scanReady = false;
 
     try {
         codeReader = new ZXing.BrowserQRCodeReader();
     } catch (e) {
-        console.error("ZXing初期化失敗", e);
+        console.error("ZXing error", e);
     }
 
     function parseQR1(text) {
@@ -91,10 +90,9 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // --- スキャン開始 ---
     async function startScan(mode) {
         currentMode = mode;
-        scanReady = false; // 最初はスキャンを受け付けない（誤動作防止）
+        scanReady = false;
         document.getElementById('status').textContent = mode + " 読み取り中…";
         vibStart();
         
@@ -113,7 +111,6 @@
                 selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
             }
 
-            // カメラの解像度を最高画質（1080p）に強制
             const constraints = {
                 video: {
                     deviceId: { exact: selectedDeviceId },
@@ -127,21 +124,20 @@
             const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
 
-            // カメラが完全に起動して映像が安定するまで1.2秒待ってから受付開始
             setTimeout(() => {
                 scanReady = true;
-            }, 1200);
+            }, 1000);
 
             codeReader.decodeFromStream(stream, 'video', (result, err) => {
-                if (result && scanReady) { // 受付準備ができている場合のみ処理
+                if (result && scanReady) {
                     if (result.resultPoints) drawBox(result.resultPoints);
                     handleScan(result.text);
                 }
             });
 
         } catch (err) {
-            console.error("カメラ起動エラー: ", err);
-            document.getElementById('status').textContent = "カメラ起動エラー";
+            console.error("Camera error: ", err);
+            document.getElementById('status').textContent = "Camera Error";
         }
     }
 
