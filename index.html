@@ -15,8 +15,9 @@
         .ng { color: red; background: #ffe6e6; border: 2px solid red; }
         #reader-wrapper { width: 100%; max-width: 380px; margin: 10px auto; overflow: hidden; border-radius: 8px; border: 2px solid #ccc; background: #000; }
         #reader { width: 100%; }
-        /* 読み取り枠の線を青色で見やすく強調 */
-        #reader__scan_region { border: 3px solid #007bff !important; }
+        /* 枠線による制限をなくし、全面をシームレスに見せるためのスタイル修正 */
+        #reader__scan_region { border: none !important; }
+        #reader__scan_region video { object-fit: cover; }
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
         .registered { color: #0066cc; font-weight: bold; margin-top: 4px; font-size: 14px; }
@@ -96,30 +97,42 @@
         await stopStreamOnly();
 
         html5QrcodeScanner = new Html5Qrcode("reader");
+        
+        // 【大改良】あえてqrboxを指定せず、画面全体（100%）を解析対象にすることでピントと感度を最大化
         const config = {
-            fps: 20,
-            qrbox: function(viewfinderWidth, viewfinderHeight) {
-                // 【黄金比】画面の55%のサイズ。適度に近づけて大きく映せるベストな大きさ。
-                const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                const boxSize = Math.floor(minEdge * 0.55);
-                return { width: boxSize, height: boxSize };
-            },
+            fps: 25, 
             experimentalFeatures: {
                 useBarCodeDetectorIfSupported: true
             }
         };
 
+        // 【最強設定】フルHDの高解像度と環境光に最適化された背面のメインカメラを直接要求
+        const cameraConfig = {
+            facingMode: "environment",
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+        };
+
         try {
-            // 高解像度・オートフォーカスを意識した標準カメラ起動設定
             await html5QrcodeScanner.start(
-                { facingMode: "environment" },
+                cameraConfig,
                 config,
                 (text) => { handleScanResult(text); },
                 (errorMessage) => {}
             );
         } catch (err) {
             console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "カメラ起動エラー";
+            // 万が一高解像度要求ではじかれた場合は、標準の起動方法に切り替え
+            try {
+                await html5QrcodeScanner.start(
+                    { facingMode: "environment" },
+                    { fps: 25 },
+                    (text) => { handleScanResult(text); },
+                    (errorMessage) => {}
+                );
+            } catch (retryErr) {
+                document.getElementById('status').textContent = "カメラ起動エラー";
+            }
         }
     }
 
