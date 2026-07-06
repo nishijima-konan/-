@@ -64,7 +64,7 @@
         <button onclick="cancelRegistration()" style="background: #dc3545; color: white; border: none; padding: 8px; font-size: 14px;">登録を中断して戻る</button>
     </div>
 
-    <!-- 【新設】現在の照合元データ表示エリア -->
+    <!-- 現在の照合元データ表示エリア -->
     <div id="target-box" class="box hidden">
         <div class="label">🎯 現在の照合元（比較ベースとなるJKUUL）</div>
         <div id="target-info" class="target-display">未読込</div>
@@ -76,7 +76,7 @@
         <canvas id="overlay"></canvas>
     </div>
 
-    <!-- 【新設】登録データベース確認ウィンドウ -->
+    <!-- 登録データベース確認ウィンドウ -->
     <div class="box">
         <div class="label">📊 登録マスターデータベース（ペア一覧）</div>
         <div style="max-height: 200px; overflow-y: auto;">
@@ -89,7 +89,7 @@
                     </tr>
                 </thead>
                 <tbody id="db-list">
-                    <tr><td colspan="3" style="text-align:center; color:#999;">登録データはありません</td>
+                    <tr><td colspan="3" style="text-align:center; color:#999;">登録データはありません</td></tr>
                 </tbody>
             </table>
         </div>
@@ -100,7 +100,7 @@
         <div id="log"></div>
     </div>
 
-<script {nonce}>
+<script>
     // 社内ラベルのキーを元に、対応するJKUULのデータを保持するデータ辞書（データベース）
     let pairMaster = {};
     
