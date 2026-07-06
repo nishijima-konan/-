@@ -19,6 +19,7 @@
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
+    <!-- 1番スムーズに読めた時のZXingライブラリ -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -57,7 +58,6 @@
     let currentMode = null;
     let autoMode = false;
     let codeReader = null;
-    let selectedDeviceId = null;
     let scanReady = false;
 
     try {
@@ -101,32 +101,27 @@
         const octx = overlay.getContext("2d");
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
+        // 機種エラーを起こさない最も安全でシンプルな「背面カメラ指定」
+        const constraints = {
+            video: {
+                facingMode: "environment"
+            }
+        };
+
         try {
-            if (!selectedDeviceId) {
-                const videoInputDevices = await codeReader.listVideoInputDevices();
-                const backCamera = videoInputDevices.find(device => 
-                    device.label.toLowerCase().includes('back') || 
-                    device.label.toLowerCase().includes('environment')
-                );
-                selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
+            const videoElement = document.getElementById('video');
+            if (videoElement.srcObject) {
+                const tracks = videoElement.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                videoElement.srcObject = null;
             }
 
-            const constraints = {
-                video: {
-                    deviceId: { exact: selectedDeviceId },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    focusMode: { ideal: "continuous" }
-                }
-            };
-
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
 
             setTimeout(() => {
                 scanReady = true;
-            }, 1000);
+            }, 800);
 
             codeReader.decodeFromStream(stream, 'video', (result, err) => {
                 if (result && scanReady) {
@@ -137,7 +132,7 @@
 
         } catch (err) {
             console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "Camera Error";
+            document.getElementById('status').textContent = "エラーのため停止";
         }
     }
 
@@ -218,6 +213,7 @@
                     setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
                 } else {
                     vibNG();
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
                 }
                 return;
             }
@@ -232,6 +228,7 @@
                     setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
                 } else {
                     vibNG();
+                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 2000);
                 }
                 return;
             }
