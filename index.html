@@ -15,7 +15,6 @@
         .ng { color: red; background: #ffe6e6; border: 2px solid red; }
         #reader-wrapper { width: 100%; max-width: 380px; margin: 10px auto; overflow: hidden; border-radius: 8px; border: 2px solid #ccc; background: #000; }
         #reader { width: 100%; }
-        /* 読み取り枠（スキャンガイド）の線を太く見やすくする調整 */
         #reader__scan_region { border: 3px solid #007bff !important; }
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
@@ -97,13 +96,12 @@
 
         html5QrcodeScanner = new Html5Qrcode("reader");
         const config = {
-            fps: 20, // 認識速度をアップ
+            fps: 20,
             qrbox: function(viewfinderWidth, viewfinderHeight) {
-                // 【修正】枠を小さく（35%）して、スマホを近づけて大きく映せるように変更
+                // 【大修正】下限を撤廃し、画面の「25%（4分の1）」まで確実に枠を縮小
                 const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                const boxSize = Math.floor(minEdge * 0.35);
-                // 小さすぎ防止（最低でも180px）
-                return { width: Math.max(boxSize, 180), height: Math.max(boxSize, 180) };
+                const boxSize = Math.floor(minEdge * 0.25);
+                return { width: boxSize, height: boxSize };
             },
             experimentalFeatures: {
                 useBarCodeDetectorIfSupported: true
