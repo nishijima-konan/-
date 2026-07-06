@@ -59,6 +59,7 @@
     let autoMode = false;
     let codeReader = null;
     let selectedDeviceId = null;
+    let scanReady = false; // 起動直後の誤判定を防ぐフラグ
 
     try {
         codeReader = new ZXing.BrowserQRCodeReader();
@@ -90,9 +91,10 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // --- 【重要】高解像度化を適用した新しいスキャン関数 ---
+    // --- スキャン開始 ---
     async function startScan(mode) {
         currentMode = mode;
+        scanReady = false; // 最初はスキャンを受け付けない（誤動作防止）
         document.getElementById('status').textContent = mode + " 読み取り中…";
         vibStart();
         
@@ -125,8 +127,13 @@
             const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
 
+            // カメラが完全に起動して映像が安定するまで1.2秒待ってから受付開始
+            setTimeout(() => {
+                scanReady = true;
+            }, 1200);
+
             codeReader.decodeFromStream(stream, 'video', (result, err) => {
-                if (result) {
+                if (result && scanReady) { // 受付準備ができている場合のみ処理
                     if (result.resultPoints) drawBox(result.resultPoints);
                     handleScan(result.text);
                 }
@@ -170,6 +177,7 @@
     function stopScan() {
         autoMode = false;
         currentMode = null;
+        scanReady = false;
         const videoElement = document.getElementById('video');
         if (videoElement && videoElement.srcObject) {
             const stream = videoElement.srcObject;
