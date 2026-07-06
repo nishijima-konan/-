@@ -19,10 +19,15 @@
         
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
-        .registered { color: #0066cc; font-weight: bold; margin-top: 4px; font-size: 14px; }
         #log { font-size: 13px; margin-top: 8px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; background: #fff; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        
+        /* 画面切り替え用のスタイル */
+        .hidden { display: none; }
+        .mode-title { font-size: 14px; font-weight: bold; padding: 6px; border-radius: 4px; text-align: center; margin-bottom: 10px; }
+        .mode-main { background-color: #e3f2fd; color: #0d47a1; border: 1px solid #bbdefb; }
+        .mode-reg { background-color: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; }
+        .master-list { font-size: 12px; color: #555; max-height: 80px; overflow-y: auto; background: #eee; padding: 6px; border-radius: 4px; margin-top: 5px; }
     </style>
-    <!-- 実績のあるZXingライブラリ -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -30,21 +35,26 @@
     <h1>QRラベル判定</h1>
     <div id="status">停止中</div>
 
-    <div class="box">
-        <div class="label">① 標準QR登録</div>
-        <button onclick="pressScanButton('qr1ref')" style="border-left: 5px solid #0066cc;">QR1標準を読み取る</button>
-        <div id="qr1refText" class="registered"></div>
-        <button onclick="pressScanButton('qr2ref')" style="border-left: 5px solid #00cc66;">QR2標準を読み取る</button>
-        <div id="qr2refText" class="registered"></div>
-    </div>
-
-    <div class="box">
-        <div class="label">② ラベル照合（自動ループ）</div>
-        <button onclick="startAuto()" style="background: #007bff; color: white; border: none;">照合開始（QR1 → QR2）</button>
+    <!-- 通常業務メイン画面 -->
+    <div id="section-main" class="box">
+        <div class="mode-title mode-main">【通常照合モード】</div>
+        <button onclick="startMainScan()" style="background: #007bff; color: white; border: none;">照合スキャン開始</button>
         <button onclick="stopScan()" style="background: #6c757d; color: white; border: none; margin-top: 8px;">停止</button>
         <div id="result"></div>
+        <div class="label" style="margin-top:10px;">登録済みペア数: <span id="pair-count">0</span></div>
     </div>
 
+    <!-- ペアマスター管理画面（別画面扱い・自動ジャンプ先） -->
+    <div id="section-reg" class="box hidden">
+        <div class="mode-title mode-reg">【QR2・QR1ペア登録画面】</div>
+        <div style="color: red; font-weight: bold; font-size: 14px; margin-bottom: 10px;" id="reg-guide">
+            新しいQR2が検出されました。対応する「QR1標準」を読み取ってください。
+        </div>
+        <div id="current-qr2-info" style="font-size:13px; font-weight:bold; margin-bottom:10px; background:#f0f0f0; padding:6px; border-radius:4px;"></div>
+        <button onclick="cancelRegistration()" style="background: #dc3545; color: white; border: none;">登録をキャンセルして戻る</button>
+    </div>
+
+    <!-- カメラ表示エリア -->
     <div id="video-wrapper">
         <video id="video" autoplay playsinline></video>
         <canvas id="overlay"></canvas>
@@ -56,73 +66,81 @@
     </div>
 
 <script>
-    let refQR1 = null;
-    let refQR2 = null;
-    let currentMode = null;
-    let autoMode = false;
+    // QR2のキー（品番+数量）をキーとして、対応するQR1のデータを保持するデータ辞書
+    let pairMaster = {};
+    
+    // 現在の作業状態を管理
+    let currentPhase = "STOPPED"; // STOPPED, WAIT_QR1_FIRST, WAIT_QR2_LOOP, REG_WAIT_QR1
+    let tempQR2Data = null;       // 登録一時待避用
+
     let codeReader = null;
     let selectedDeviceId = null;
     let isStreamActive = false;
-
-    // 連続読み取りを防ぐインターバル用
     let lastScanTime = 0;
 
     try {
-        codeReader = new ZXing.BrowserQRCodeReader();
+        const hints = new Map();
+        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
+        codeReader = new ZXing.BrowserQRCodeReader(hints);
     } catch (e) {
         console.error("ZXing error", e);
     }
 
     function parseQR1(text) {
-        if (!text) return { partNo: "", qty: "" };
+        if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.split(",", 5);
-        if (parts.length < 5) return { partNo: text.trim(), qty: "1" };
-        return { partNo: parts[0].trim(), qty: parts[4].trim() };
+        if (parts.length < 5) return { partNo: text.trim(), qty: "1", raw: text };
+        return { partNo: parts[0].trim(), qty: parts[4].trim(), raw: text };
     }
 
     function parseQR2(text) {
-        if (!text) return { partNo: "", qty: "" };
+        if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.trim().split(/\s+/);
-        if (parts.length < 12) return { partNo: text.trim(), qty: "1" };
+        if (parts.length < 12) return { partNo: text.trim(), qty: "1", raw: text };
         return {
             partNo: parts[1] + " " + parts[2],
-            qty: parts[11].replace(/^0+/, "")
+            qty: parts[11].replace(/^0+/, ""),
+            raw: text
         };
     }
 
-    function checkQR1(ref, qr1) { return ref && qr1 && ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
-    function checkQR2(ref, qr2) { return ref && qr2 && ref.partNo === qr2.partNo && ref.qty === qr2.qty; }
+    function createKey(parsedObj) {
+        return parsedObj.partNo + "___" + parsedObj.qty;
+    }
 
     function vibOK() { if(navigator.vibrate) navigator.vibrate(100); }
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // ボタンが押された時の処理
-    async function pressScanButton(mode) {
-        autoMode = false;
-        currentMode = mode;
-        document.getElementById('status').textContent = mode + " 読み取り中…";
+    // メイン照合開始ボタン
+    async function startMainScan() {
+        currentPhase = "WAIT_QR1_FIRST";
+        document.getElementById('status').textContent = "【ステップ1】最初に「QR1」を一度だけ読み取ってください";
         vibStart();
         if (!isStreamActive) {
             await startCameraStream();
         }
     }
 
-    async function startAuto() {
-        if (!refQR1 || !refQR2) {
-            alert("先にQR1とQR2の標準登録を行ってください");
-            return;
-        }
-        autoMode = true;
-        currentMode = "qr1";
-        document.getElementById('status').textContent = "QR1 読み取り中… (自動)";
-        vibStart();
-        if (!isStreamActive) {
-            await startCameraStream();
-        }
+    // キャンセルボタン
+    function cancelRegistration() {
+        tempQR2Data = null;
+        switchToMainView();
+        startMainScan();
     }
 
-    // カメラのストリームを一度だけ起動する（つけっぱなしにする）
+    function switchToRegView(qr2Obj) {
+        document.getElementById("section-main").classList.add("hidden");
+        document.getElementById("section-reg").classList.remove("hidden");
+        document.getElementById("current-qr2-info").textContent = "対象QR2 品番: " + qr2Obj.partNo + " / 数量: " + qr2Obj.qty;
+    }
+
+    function switchToMainView() {
+        document.getElementById("section-reg").classList.add("hidden");
+        document.getElementById("section-main").classList.remove("hidden");
+        document.getElementById("pair-count").textContent = Object.keys(pairMaster).length;
+    }
+
     async function startCameraStream() {
         if (codeReader) codeReader.reset();
         clearOverlay();
@@ -151,15 +169,11 @@
             videoElement.srcObject = stream;
             isStreamActive = true;
 
-            // 解読ループ処理（カメラを止めずにずっと監視させる）
             codeReader.decodeFromStream(stream, 'video', (result, err) => {
-                if (result && currentMode) {
+                if (result && currentPhase !== "STOPPED") {
                     const now = Date.now();
-                    // 前回の読み取りから1.5秒以内は重複処理しない
                     if (now - lastScanTime < 1500) return;
-
-                    // 不完全なデータの誤取り込みガード（極端に短い文字は無視）
-                    if (result.text.length < 5) return;
+                    if (result.text.length < 5) return; 
 
                     lastScanTime = now;
                     if (result.resultPoints) drawBox(result.resultPoints);
@@ -173,74 +187,89 @@
         }
     }
 
+    // 現在一時保存されているQR1のデータ（ステップ1で読んだもの）
+    let activeQR1Data = null;
+
     function handleScan(text) {
         if (!text) return;
 
-        // 単発の標準登録処理
-        if (currentMode === "qr1ref") {
-            refQR1 = parseQR1(text);
-            document.getElementById("qr1refText").textContent = "【登録済】品番:" + refQR1.partNo + " / 数量:" + refQR1.qty;
-            document.getElementById('status').textContent = "QR1登録完了";
+        // 【ステップ1】基準となるQR1を1回だけ読み取る状態
+        if (currentPhase === "WAIT_QR1_FIRST") {
+            activeQR1Data = parseQR1(text);
+            addLog("QR1照合元読込", "OK", text);
             vibOK();
-            addLog("QR1標準", "OK", text);
-            currentMode = null; // スキャン受付を一時休止
-            clearOverlayDelayed();
-            return;
-        }
-        if (currentMode === "qr2ref") {
-            refQR2 = parseQR2(text);
-            document.getElementById("qr2refText").textContent = "【登録済】品番:" + refQR2.partNo + " / 数量:" + refQR2.qty;
-            document.getElementById('status').textContent = "QR2登録完了";
-            vibOK();
-            addLog("QR2標準", "OK", text);
-            currentMode = null;
+            
+            // ステップ2へ移行
+            currentPhase = "WAIT_QR2_LOOP";
+            document.getElementById('status').textContent = "【ステップ2】「QR2」をスキャンしてください（連続照合可）";
             clearOverlayDelayed();
             return;
         }
 
-        // 自動ループ判定処理（カメラは止めていない）
-        if (autoMode) {
-            if (currentMode === "qr1") {
-                const qr1 = parseQR1(text);
-                const ok = checkQR1(refQR1, qr1);
-                showResult(ok, "QR1");
-                addLog("QR1", ok ? "OK" : "NG", text);
+        // 【ステップ2】QR2を次々と読み込んで判定するメインループ状態
+        if (currentPhase === "WAIT_QR2_LOOP") {
+            const qr2Data = parseQR2(text);
+            const qr2Key = createKey(qr2Data);
+
+            // このQR2に対する「対応QR1標準」がマスタに存在するか確認
+            const registeredQR1 = pairMaster[qr2Key];
+
+            if (!registeredQR1) {
+                // マスタ未登録の場合 ➔ 自動で別画面（登録画面）へジャンプ！
+                vibNG();
+                tempQR2Data = qr2Data; // QR2を一時保持
+                currentPhase = "REG_WAIT_QR1"; // 登録待ち状態へ
                 
-                if (ok) {
-                    vibOK();
-                    currentMode = "qr2"; // カメラを止めることなく、判定対象をQR2に切り替え
-                    document.getElementById('status').textContent = "次：QR2を読み取ってください";
-                } else {
-                    vibNG();
-                    // NGだった場合はそのままQR1をやり直させる
-                    document.getElementById('status').textContent = "QR1 NG 再度スキャン…";
-                }
+                document.getElementById('status').textContent = "【自動ジャンプ】未登録のQR2です。ペア登録を行います";
+                switchToRegView(qr2Data);
                 clearOverlayDelayed();
                 return;
             }
-            if (currentMode === "qr2") {
-                const qr2 = parseQR2(text);
-                const ok = checkQR2(refQR2, qr2);
-                showResult(ok, "QR2");
-                addLog("QR2", ok ? "OK" : "NG", text);
-                
-                if (ok) {
-                    vibOK();
-                    currentMode = "qr1"; // 判定対象を最初のQR1に戻す
-                    document.getElementById('status').textContent = "次：QR1を読み取ってください";
-                } else {
-                    vibNG();
-                    document.getElementById('status').textContent = "QR2 NG 再度スキャン…";
-                }
-                clearOverlayDelayed();
-                return;
+
+            // マスタに登録があった場合 ➔ 最初に読み込んだQR1（activeQR1Data）が、マスタデータと一致するか照合
+            const isPartOK = (registeredQR1.partNo === activeQR1Data.partNo);
+            const isQtyOK = (registeredQR1.qty === activeQR1Data.qty);
+            const finalOK = isPartOK && isQtyOK;
+
+            showResult(finalOK, "QR2照合");
+            addLog("QR2判定", finalOK ? "OK" : "NG", text);
+
+            if (finalOK) {
+                vibOK();
+                document.getElementById('status').textContent = "QR2 OK! 次のQR2をどうぞ";
+            } else {
+                vibNG();
+                document.getElementById('status').textContent = "QR2 NG! 品番・数量不一致。次のQR2をどうぞ";
             }
+            clearOverlayDelayed();
+            return;
+        }
+
+        // 【自動ジャンプ先】未登録QR2に対応する、QR1を読ませて紐付ける状態
+        if (currentPhase === "REG_WAIT_QR1") {
+            const qr1Data = parseQR1(text);
+            const qr2Key = createKey(tempQR2Data);
+
+            // ペアとしてマスタに保存
+            pairMaster[qr2Key] = qr1Data;
+            
+            addLog("ペア登録完了", "SUCCESS", `QR2[${tempQR2Data.partNo}] ➔ QR1[${qr1Data.partNo}]`);
+            vibOK();
+
+            // 登録が終わったので、一時データを消して通常画面に戻る
+            tempQR2Data = null;
+            switchToMainView();
+
+            // 登録完了後、そのままそのペアを用いてステップ2（QR2スキャン状態）に復帰させる
+            currentPhase = "WAIT_QR2_LOOP";
+            document.getElementById('status').textContent = "登録完了。引き続き「QR2」をスキャンしてください";
+            clearOverlayDelayed();
+            return;
         }
     }
 
     function stopScan() {
-        autoMode = false;
-        currentMode = null;
+        currentPhase = "STOPPED";
         isStreamActive = false;
         const videoElement = document.getElementById('video');
         if (videoElement && videoElement.srcObject) {
