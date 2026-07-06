@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -19,22 +18,14 @@
         .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
-        .cam-ctrl { background: #f0f0f0; border: 1px solid #bbb; color: #333; font-size: 14px; padding: 6px; margin: 5px 0; }
     </style>
-    <!-- 一瞬で読めた時の高性能ライブラリ(ZXing)に戻しました -->
+    <!-- 爆速で読めた元のZXingライブラリ -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
 
     <h1>QRラベル判定</h1>
     <div id="status">停止中</div>
-
-    <!-- カメラ切り替えレスキュー機能 -->
-    <div class="box" style="background:#fff9e6; border-color:#ffe0b2;">
-        <div class="label" style="color:#b78103; font-weight:bold;">⚠️ 内カメラが動く・停止する場合の切り替え</div>
-        <div id="cam-info" style="font-size:12px; margin-bottom:5px; color:#666;">カメラを準備中...</div>
-        <button class="cam-ctrl" onclick="switchCamera()">次のカメラに切り替え</button>
-    </div>
 
     <div class="box">
         <div class="label">① 標準QR登録</div>
@@ -69,62 +60,10 @@
     let codeReader = null;
     let scanReady = false;
 
-    // カメラリスト管理
-    let videoDevices = [];
-    let currentCamIndex = 0;
-
     try {
         codeReader = new ZXing.BrowserQRCodeReader();
     } catch (e) {
         console.error("ZXing error", e);
-    }
-
-    // 利用可能なカメラ一覧を取得して背面を優先ソート
-    async function initCameraList() {
-        try {
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoInputs = devices.filter(device => device.kind === 'videoinput');
-            
-            if (videoInputs.length > 0) {
-                // 背面カメラ(front/user/内カメラを含まないもの)を前に、内カメラを後ろに並び替える
-                const back = videoInputs.filter(d => !d.label.toLowerCase().includes('front') && !d.label.toLowerCase().includes('user') && !d.label.includes('内'));
-                const front = videoInputs.filter(d => d.label.toLowerCase().includes('front') || d.label.toLowerCase().includes('user') || d.label.includes('内'));
-                videoDevices = [...back, ...front];
-                
-                updateCamInfoDisplay();
-            } else {
-                document.getElementById('cam-info').textContent = "カメラが見つかりません";
-            }
-        } catch (e) {
-            console.error("Enumerate devices error", e);
-            document.getElementById('cam-info').textContent = "カメラ一覧を取得できませんでした";
-        }
-    }
-
-    function updateCamInfoDisplay() {
-        if(videoDevices.length > 0) {
-            const label = videoDevices[currentCamIndex].label || `カメラ ${currentCamIndex + 1}`;
-            document.getElementById('cam-info').textContent = `全カメラ数: ${videoDevices.length}つ（現在: ${currentCamIndex + 1}つ目を選択中）\n[${label}]`;
-        }
-    }
-
-    // カメラ切り替えボタン
-    async function switchCamera() {
-        if (videoDevices.length <= 1) {
-            alert("切り替え可能な他のカメラが見つかりません。");
-            return;
-        }
-        currentCamIndex = (currentCamIndex + 1) % videoDevices.length;
-        updateCamInfoDisplay();
-        
-        if (currentMode) {
-            const saveMode = currentMode;
-            stopScan();
-            // 少し待ってから次のカメラでスキャンを再起動
-            setTimeout(() => { startScan(saveMode); }, 400);
-        } else {
-            alert("「読み取る」または「照合開始」を押してから切り替えてください。");
-        }
     }
 
     function parseQR1(text) {
@@ -151,6 +90,33 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
+    // 最適な背面カメラIDを徹底探索して取得する関数
+    async function getBestBackCameraId() {
+        try {
+            // まずカメラ使用の権限を得るために一度ダミーで叩く
+            const initialStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+            initialStream.getTracks().forEach(track => track.stop()); // すぐ止める
+
+            // 全デバイスの一覧を取得
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+            // キーワードから背面カメラを厳密に抽出
+            const backCams = videoDevices.filter(d => {
+                const label = d.label.toLowerCase();
+                return !label.includes('front') && !label.includes('user') && !label.includes('内') && !label.includes('sub');
+            });
+
+            if (backCams.length > 0) {
+                // 複数ある場合は、広角メインレンズになりやすい最初のもの、または特定の通常レンズを優先
+                return backCams[0].deviceId;
+            }
+        } catch (e) {
+            console.error("Camera detection error:", e);
+        }
+        return null; // 見つからなければシステム既定値に委ねる
+    }
+
     async function startScan(mode) {
         currentMode = mode;
         scanReady = false;
@@ -163,14 +129,12 @@
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
         try {
-            if(videoDevices.length === 0) {
-                await initCameraList();
-            }
-
-            // 切り替え機能で選ばれている特定のカメラID、またはデフォルト背面を指定
+            const backCamId = await getBestBackCameraId();
+            
+            // 条件指定（デバイスIDがあればそれを最優先、なければ環境既定の背面）
             const constraints = {
-                video: videoDevices.length > 0 
-                    ? { deviceId: { exact: videoDevices[currentCamIndex].id } }
+                video: backCamId 
+                    ? { deviceId: { exact: backCamId } }
                     : { facingMode: "environment" }
             };
 
@@ -191,7 +155,20 @@
 
         } catch (err) {
             console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "Camera Error (停止)";
+            // exact指定で弾かれた場合の最終セーフティネット
+            try {
+                const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                document.getElementById('video').srcObject = fallbackStream;
+                setTimeout(() => { scanReady = true; }, 1000);
+                codeReader.decodeFromStream(fallbackStream, 'video', (result, err) => {
+                    if (result && scanReady) {
+                        if (result.resultPoints) drawBox(result.resultPoints);
+                        handleScan(result.text);
+                    }
+                });
+            } catch(e) {
+                document.getElementById('status').textContent = "Camera Error (停止)";
+            }
         }
     }
 
@@ -306,9 +283,6 @@
         const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, " ");
         log.textContent = `[${time}] ${type} → ${result} : ${cleanText}\n` + log.textContent;
     }
-
-    // 読み込み時にカメラをリスト化
-    window.addEventListener('DOMContentLoaded', initCameraList);
 </script>
 </body>
 </html>
