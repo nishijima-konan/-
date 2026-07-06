@@ -15,9 +15,24 @@
         .ng { color: red; background: #ffe6e6; border: 2px solid red; }
         #reader-wrapper { width: 100%; max-width: 380px; margin: 10px auto; overflow: hidden; border-radius: 8px; border: 2px solid #ccc; background: #000; }
         #reader { width: 100%; }
-        /* 枠線による制限をなくし、全面をシームレスに見せるためのスタイル修正 */
-        #reader__scan_region { border: none !important; }
-        #reader__scan_region video { object-fit: cover; }
+        
+        /* 【超重要】邪魔な四角い枠や、ライブラリの自動表示を物理的に完全消去 */
+        #reader__scan_region, 
+        #reader__scan_region div, 
+        div[style*="border"], 
+        .qrbox { 
+            border: none !important; 
+            box-shadow: none !important;
+        }
+        #reader__scan_region img {
+            display: none !important;
+        }
+        #reader__scan_region video { 
+            object-fit: cover !important; 
+            width: 100% !important;
+            height: 100% !important;
+        }
+
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
         .registered { color: #0066cc; font-weight: bold; margin-top: 4px; font-size: 14px; }
@@ -98,15 +113,14 @@
 
         html5QrcodeScanner = new Html5Qrcode("reader");
         
-        // 【大改良】あえてqrboxを指定せず、画面全体（100%）を解析対象にすることでピントと感度を最大化
+        // 【極限シンプル化】余計な機能・制限をすべて排除し、生のカメラスピードと画質を優先
         const config = {
-            fps: 25, 
+            fps: 30,
             experimentalFeatures: {
                 useBarCodeDetectorIfSupported: true
             }
         };
 
-        // 【最強設定】フルHDの高解像度と環境光に最適化された背面のメインカメラを直接要求
         const cameraConfig = {
             facingMode: "environment",
             width: { ideal: 1920 },
@@ -122,11 +136,10 @@
             );
         } catch (err) {
             console.error("Camera error: ", err);
-            // 万が一高解像度要求ではじかれた場合は、標準の起動方法に切り替え
             try {
                 await html5QrcodeScanner.start(
                     { facingMode: "environment" },
-                    { fps: 25 },
+                    { fps: 30 },
                     (text) => { handleScanResult(text); },
                     (errorMessage) => {}
                 );
