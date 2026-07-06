@@ -25,14 +25,17 @@
     width: 100%;
     display: block;
     border-radius: 6px;
+    transform: scaleX(1); /* 反転防止 */
   }
 
+  /* 読み取り成功時の枠線用 */
   #overlay {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
+    pointer-events: none;
   }
 
   .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
@@ -40,14 +43,15 @@
   #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
 </style>
 
-<script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+<!-- 業務用のあらゆる特殊QRに対応した強力なライブラリZXing -->
+<script src="https://unpkg.com/@zxing/library@latest"></script>
 
 </head>
 <body>
 
 <h1>QRラベル判定</h1>
 
-<div id="status"></div>
+<div id="status">停止中</div>
 
 <div class="box">
   <div class="label">① 標準QR登録</div>
@@ -70,8 +74,6 @@
   <canvas id="overlay"></canvas>
 </div>
 
-<canvas id="canvas" style="display:none;"></canvas>
-
 <div class="box">
   <div class="label">③ 読み取り履歴ログ</div>
   <div id="log"></div>
@@ -82,182 +84,151 @@ let refQR1 = null;
 let refQR2 = null;
 let currentMode = null;
 let autoMode = false;
-let stream = null;
-let scanning = false;
+let codeReader = null;
+let selectedDeviceId = null;
 
-// --- QRデータ解析（エラーで止まらないように安全ガードを追加） ---
+// ライブラリの初期化
+try {
+  codeReader = new ZXing.BrowserQRCodeReader();
+} catch (e) {
+  console.error("ZXingの初期化に失敗しました", e);
+}
+
+// --- QRデータ解析（エラー防止ガード付き） ---
 function parseQR1(text) {
-  try {
-    const parts = text.split(",", 5);
-    // カンマ区切りになっていない場合はテキストそのまま全体を部品番号とする
-    if (parts.length < 5) {
-      return { partNo: text.trim(), qty: "1" };
-    }
-    return { partNo: parts[0].trim(), qty: parts[4].trim() };
-  } catch (e) {
-    return { partNo: text.trim(), qty: "1" };
-  }
+  if (!text) return { partNo: "", qty: "" };
+  const parts = text.split(",", 5);
+  if (parts.length < 5) return { partNo: text.trim(), qty: "1" };
+  return { partNo: parts[0].trim(), qty: parts[4].trim() };
 }
 
 function parseQR2(text) {
-  try {
-    const parts = text.trim().split(/\s+/);
-    // 空白区切りで要素が足りない場合はテキストそのまま全体を部品番号とする
-    if (parts.length < 12) {
-      return { partNo: text.trim(), qty: "1" };
-    }
-    return {
-      partNo: parts[1] + " " + parts[2],
-      qty: parts[11].replace(/^0+/, "")
-    };
-  } catch (e) {
-    return { partNo: text.trim(), qty: "1" };
-  }
+  if (!text) return { partNo: "", qty: "" };
+  const parts = text.trim().split(/\s+/);
+  if (parts.length < 12) return { partNo: text.trim(), qty: "1" };
+  return {
+    partNo: parts[1] + " " + parts[2],
+    qty: parts[11].replace(/^0+/, "")
+  };
 }
 
-function checkQR1(ref, qr1) { return ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
-function checkQR2(ref, qr2) { return ref.partNo === qr2.partNo && ref.qty === qr2.qty; }
+function checkQR1(ref, qr1) { return ref && qr1 && ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
+function checkQR2(ref, qr2) { return ref && qr2 && ref.partNo === qr2.partNo && ref.qty === qr2.qty; }
 
 // --- バイブレーション ---
-function vibOK() { navigator.vibrate(100); }
-function vibNG() { navigator.vibrate([200, 100, 200]); }
-function vibStart() { navigator.vibrate(50); }
+function vibOK() { if(navigator.vibrate) navigator.vibrate(100); }
+function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
+function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-// --- カメラ起動 ---
+// --- スキャン開始 ---
 async function startScan(mode) {
   currentMode = mode;
   document.getElementById('status').textContent = mode + " 読み取り中…";
   vibStart();
-
-  const video = document.getElementById("video");
-
-  if (!stream) {
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-      video.srcObject = stream;
-
-      setTimeout(async () => {
-        const track = stream.getVideoTracks()[0];
-        const capabilities = track.getCapabilities();
-        if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
-          await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-        }
-      }, 500);
-
-    } catch (err) {
-      console.error(err);
-      document.getElementById('status').textContent = "カメラ起動エラー";
-      return;
-    }
-  }
-
-  scanning = true;
-  scanLoop();
-}
-
-// --- 高速スキャンループ ---
-function scanLoop() {
-  if (!scanning) return;
-
-  const video = document.getElementById("video");
-  const canvas = document.getElementById("canvas");
-  const overlay = document.getElementById("overlay");
-  const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  const octx = overlay.getContext("2d");
-
-  if (video.videoWidth === 0 || video.videoHeight === 0) {
-    requestAnimationFrame(scanLoop);
-    return;
-  }
-
-  if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    overlay.width = video.videoWidth;
-    overlay.height = video.videoHeight;
-  }
-
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   
-  const code = jsQR(imgData.data, canvas.width, canvas.height);
-
+  // 過去の起動状態をリセット
+  codeReader.reset();
+  const overlay = document.getElementById("overlay");
+  const octx = overlay.getContext("2d");
   octx.clearRect(0, 0, overlay.width, overlay.height);
 
-  if (code) {
-    drawBox(octx, code.location);
-    handleScan(code.data);
-  }
+  try {
+    // 背面カメラデバイスの特定
+    if (!selectedDeviceId) {
+      const videoInputDevices = await codeReader.listVideoInputDevices();
+      // 背面カメラ（environment）っぽい名前のカメラを優先選択
+      const backCamera = videoInputDevices.find(device => device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('environment'));
+      selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
+    }
 
-  requestAnimationFrame(scanLoop);
+    // ZXingによる超高速・高精度デコードの開始（連続読み取りモード）
+    codeReader.decodeFromVideoDevice(selectedDeviceId, 'video', (result, err) => {
+      if (result) {
+        // 読み取り枠の描画表示
+        if (result.resultPoints) {
+          drawBox(result.resultPoints);
+        }
+        // 解析処理へ
+        handleScan(result.text);
+      }
+    });
+
+  } catch (err) {
+    console.error("カメラ起動エラー: ", err);
+    document.getElementById('status').textContent = "カメラ起動エラー";
+  }
 }
 
-// --- 枠線描画 ---
-function drawBox(ctx, loc) {
+// --- 簡易的な枠線描画 ---
+function drawBox(points) {
+  const overlay = document.getElementById("overlay");
+  const video = document.getElementById("video");
+  overlay.width = video.clientWidth;
+  overlay.height = video.clientHeight;
+  const ctx = overlay.getContext("2d");
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+
   ctx.strokeStyle = "lime";
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(loc.topLeftCorner.x, loc.topLeftCorner.y);
-  ctx.lineTo(loc.topRightCorner.x, loc.topRightCorner.y);
-  ctx.lineTo(loc.bottomRightCorner.x, loc.bottomRightCorner.y);
-  ctx.lineTo(loc.bottomLeftCorner.x, loc.bottomLeftCorner.y);
+  
+  // スケールを実際の表示サイズに合わせる
+  const scaleX = video.clientWidth / video.videoWidth;
+  const scaleY = video.clientHeight / video.videoHeight;
+
+  ctx.moveTo(points[0].getX() * scaleX, points[0].getY() * scaleY);
+  for(let i=1; i<points.length; i++) {
+    ctx.lineTo(points[i].getX() * scaleX, points[i].getY() * scaleY);
+  }
   ctx.closePath();
   ctx.stroke();
 }
 
-// --- 自動ループ開始 ---
+// --- 自動照合開始 ---
 function startAuto() {
   if (!refQR1 || !refQR2) {
     alert("標準QRが登録されていません");
     return;
   }
   autoMode = true;
-  currentMode = "qr1";
-  document.getElementById('status').textContent = "自動照合モード開始";
-  vibStart();
-  startScan(currentMode);
+  startScan("qr1");
 }
 
 // --- 停止 ---
 function stopScan() {
   autoMode = false;
-  scanning = false;
   currentMode = null;
+  if(codeReader) codeReader.reset();
   document.getElementById('status').textContent = "停止しました";
+  const overlay = document.getElementById("overlay");
+  overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
 }
 
 // --- 読み取り後の処理 ---
 function handleScan(text) {
   if (!text) return;
-  scanning = false; // 連続読み込みを防ぐために一度止める
+  
+  // 連続での重複読み込みを一時的に防ぐため、一旦デコーダーを止める
+  codeReader.reset();
 
-  // ① 標準QR1登録
   if (currentMode === "qr1ref") {
     refQR1 = parseQR1(text);
-    document.getElementById("qr1refText").textContent = "QR1標準: " + text;
+    document.getElementById("qr1refText").textContent = "QR1標準登録完了";
     vibOK();
     addLog("QR1標準", "OK", text);
     stopScan();
     return;
   }
 
-  // ① 標準QR2登録
   if (currentMode === "qr2ref") {
     refQR2 = parseQR2(text);
-    document.getElementById("qr2refText").textContent = "QR2標準: " + text;
+    document.getElementById("qr2refText").textContent = "QR2標準登録完了";
     vibOK();
     addLog("QR2標準", "OK", text);
     stopScan();
     return;
   }
 
-  // ② 自動照合
   if (autoMode) {
     if (currentMode === "qr1") {
       const qr1 = parseQR1(text);
@@ -267,7 +238,8 @@ function handleScan(text) {
       if (ok) {
         vibOK();
         currentMode = "qr2";
-        setTimeout(() => { if(autoMode) { scanning = true; scanLoop(); } }, 1200);
+        // 1.2秒後に次のモードでカメラを再始動
+        setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
       } else {
         vibNG();
         stopScan();
@@ -283,7 +255,8 @@ function handleScan(text) {
       if (ok) {
         vibOK();
         currentMode = "qr1";
-        setTimeout(() => { if(autoMode) { scanning = true; scanLoop(); } }, 1200);
+        // 1.2秒後に次のモードでカメラを再始動
+        setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
       } else {
         vibNG();
         stopScan();
@@ -309,7 +282,9 @@ function showResult(ok, label) {
 function addLog(type, result, text) {
   const log = document.getElementById("log");
   const time = new Date().toLocaleTimeString();
-  log.textContent = `[${time}] ${type} → ${result} : ${text}\n` + log.textContent;
+  // 制御文字などが見えるようにエスケープして表示
+  const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, " ");
+  log.textContent = `[${time}] ${type} → ${result} : ${cleanText}\n` + log.textContent;
 }
 </script>
 
