@@ -19,16 +19,25 @@
         
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
-        #log { font-size: 13px; margin-top: 8px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; background: #fff; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        #log { font-size: 13px; margin-top: 8px; white-space: pre-wrap; max-height: 150px; overflow-y: auto; background: #fff; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
         
         /* 画面切り替え用のスタイル */
         .hidden { display: none; }
         .mode-title { font-size: 15px; font-weight: bold; padding: 8px; border-radius: 4px; text-align: center; margin-bottom: 10px; }
         .mode-main { background-color: #e3f2fd; color: #0d47a1; border: 1px solid #bbdefb; }
         
-        /* 登録専用ウィンドウのスタイル（通常時と明確に変える） */
+        /* 登録専用ウィンドウのスタイル */
         .mode-reg-window { background-color: #fff3e0; border: 3px solid #ff9800; padding: 15px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
         .mode-reg-title { font-size: 16px; font-weight: bold; color: #e65100; text-align: center; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 2px solid #ff9800; }
+        
+        /* データベース確認用スタイル */
+        .db-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+        .db-table th, .db-table td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+        .db-table th { background-color: #eee; }
+        .del-btn { background: #dc3545; color: white; border: none; padding: 3px 8px; font-size: 11px; border-radius: 4px; cursor: pointer; width: auto; margin: 0; }
+        
+        /* 現在の照合ターゲット表示 */
+        .target-display { background: #e8f5e9; border: 2px solid #4caf50; padding: 10px; border-radius: 6px; margin-bottom: 10px; font-size: 14px; }
     </style>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
@@ -43,10 +52,9 @@
         <button onclick="startMainScan()" style="background: #007bff; color: white; border: none;">照合スキャン開始</button>
         <button onclick="stopScan()" style="background: #6c757d; color: white; border: none; margin-top: 8px;">停止</button>
         <div id="result"></div>
-        <div class="label" style="margin-top:10px; text-align: right;">登録済みマスターペア数: <span id="pair-count" style="color:#007bff; font-size:16px;">0</span></div>
     </div>
 
-    <!-- 社内ラベル紐づけ登録ウィンドウ（完全に別枠として分離） -->
+    <!-- 社内ラベル紐づけ登録ウィンドウ（別枠） -->
     <div id="section-reg" class="mode-reg-window hidden">
         <div class="mode-reg-title">⚠️ 社内ラベル 紐づけ登録ウィンドウ</div>
         <div style="color: #c62828; font-weight: bold; font-size: 14px; margin-bottom: 12px; background: #ffebee; padding: 8px; border-radius: 4px; border-left: 4px solid #c62828;">
@@ -56,10 +64,35 @@
         <button onclick="cancelRegistration()" style="background: #dc3545; color: white; border: none; padding: 8px; font-size: 14px;">登録を中断して戻る</button>
     </div>
 
+    <!-- 【新設】現在の照合元データ表示エリア -->
+    <div id="target-box" class="box hidden">
+        <div class="label">🎯 現在の照合元（比較ベースとなるJKUUL）</div>
+        <div id="target-info" class="target-display">未読込</div>
+    </div>
+
     <!-- カメラ表示エリア -->
     <div id="video-wrapper">
         <video id="video" autoplay playsinline></video>
         <canvas id="overlay"></canvas>
+    </div>
+
+    <!-- 【新設】登録データベース確認ウィンドウ -->
+    <div class="box">
+        <div class="label">📊 登録マスターデータベース（ペア一覧）</div>
+        <div style="max-height: 200px; overflow-y: auto;">
+            <table class="db-table">
+                <thead>
+                    <tr>
+                        <th>社内ラベル側 (キー)</th>
+                        <th>紐づく JKUUL 標準データ</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="db-list">
+                    <tr><td colspan="3" style="text-align:center; color:#999;">登録データはありません</td>
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <div class="box">
@@ -67,13 +100,14 @@
         <div id="log"></div>
     </div>
 
-<script>
-    // 社内ラベルのキー（品番+数量）を元に、対応するJKUULのデータを保持するデータ辞書
+<script {nonce}>
+    // 社内ラベルのキーを元に、対応するJKUULのデータを保持するデータ辞書（データベース）
     let pairMaster = {};
     
     // 現在の作業状態を管理
     let currentPhase = "STOPPED"; // STOPPED, WAIT_JKUUL_FIRST, WAIT_INTERNAL_LOOP, REG_WAIT_JKUUL
     let tempInternalData = null;  // 登録一時待避用
+    let activeJKUULData = null;   // 現在照合元として選択されているJKUULデータ
 
     let codeReader = null;
     let selectedDeviceId = null;
@@ -81,7 +115,6 @@
     let lastScanTime = 0;
 
     try {
-        // 線バーコードを完全に無視し、QRコードだけを狙い撃ちする設定
         const hints = new Map();
         hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.QR_CODE]);
         codeReader = new ZXing.BrowserQRCodeReader(hints);
@@ -89,7 +122,7 @@
         console.error("ZXing error", e);
     }
 
-    // JKUUL用のパース処理 (旧QR1)
+    // JKUUL用のパース処理
     function parseJKUUL(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.split(",", 5);
@@ -97,7 +130,7 @@
         return { partNo: parts[0].trim(), qty: parts[4].trim(), raw: text };
     }
 
-    // 社内ラベル用のパース処理 (旧QR2)
+    // 社内ラベル用のパース処理
     function parseInternal(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.trim().split(/\s+/);
@@ -117,35 +150,69 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // メイン照合開始ボタン
+    // メイン照合開始
     async function startMainScan() {
         currentPhase = "WAIT_JKUUL_FIRST";
         document.getElementById('status').textContent = "【ステップ1】最初に「JKUUL」を一度だけ読み取ってください";
+        document.getElementById("target-box").classList.remove("hidden");
+        document.getElementById("target-info").textContent = "⏳ JKUULスキャン待ち...";
+        document.getElementById("target-info").style.background = "#fff3e0";
+        document.getElementById("target-info").style.borderColor = "#ff9800";
         vibStart();
         if (!isStreamActive) {
             await startCameraStream();
         }
     }
 
-    // 登録中断ボタン
     function cancelRegistration() {
         tempInternalData = null;
         switchToMainView();
         startMainScan();
     }
 
-    // 登録専用ウィンドウへ切り替え
     function switchToRegView(internalObj) {
         document.getElementById("section-main").classList.add("hidden");
         document.getElementById("section-reg").classList.remove("hidden");
         document.getElementById("current-qr2-info").innerHTML = "<strong>検出された社内ラベル:</strong><br>品番: " + internalObj.partNo + "<br>数量: " + internalObj.qty;
     }
 
-    // 通常業務メインウィンドウへ切り替え
     function switchToMainView() {
         document.getElementById("section-reg").classList.add("hidden");
         document.getElementById("section-main").classList.remove("hidden");
-        document.getElementById("pair-count").textContent = Object.keys(pairMaster).length;
+        updateDBTable();
+    }
+
+    // データベース表示の更新
+    function updateDBTable() {
+        const tbody = document.getElementById("db-list");
+        tbody.innerHTML = "";
+        const keys = Object.keys(pairMaster);
+        
+        if (keys.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:#999;">登録データはありません</td></tr>`;
+            return;
+        }
+
+        keys.forEach(key => {
+            const jkuul = pairMaster[key];
+            const displayInternal = key.replace("___", " / 数量:");
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>品番:${displayInternal}</td>
+                <td>品番:${jkuul.partNo} / 数量:${jkuul.qty}</td>
+                <td><button class="del-btn" onclick="deletePair('${key}')">削除</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    // ペアの削除機能
+    function deletePair(key) {
+        if(confirm("この登録ペアをデータベースから削除しますか？")) {
+            delete pairMaster[key];
+            updateDBTable();
+            addLog("データ削除", "INFO", key);
+        }
     }
 
     async function startCameraStream() {
@@ -194,18 +261,21 @@
         }
     }
 
-    // 最初（ステップ1）に読んだJKUULのデータを一時記憶する変数
-    let activeJKUULData = null;
-
     function handleScan(text) {
         if (!text) return;
 
-        // 【ステップ1】基準となる JKUUL を1回だけ読み取る状態
+        // 【ステップ1】基準となる JKUUL を読み取る状態
         if (currentPhase === "WAIT_JKUUL_FIRST") {
             activeJKUULData = parseJKUUL(text);
             addLog("JKUUL読込", "OK", text);
             vibOK();
             
+            // 画面の照合元情報を更新表示
+            const targetInfo = document.getElementById("target-info");
+            targetInfo.innerHTML = `<strong>品番:</strong> ${activeJKUULData.partNo} <br> <strong>数量:</strong> ${activeJKUULData.qty}`;
+            targetInfo.style.background = "#e8f5e9";
+            targetInfo.style.borderColor = "#4caf50";
+
             // ステップ2へ移行
             currentPhase = "WAIT_INTERNAL_LOOP";
             document.getElementById('status').textContent = "【ステップ2】「社内ラベル」をスキャンしてください（連続照合モード）";
@@ -218,14 +288,14 @@
             const internalData = parseInternal(text);
             const internalKey = createKey(internalData);
 
-            // この社内ラベルに対する「対応する標準JKUUL」がマスターにあるか確認
+            // データベースに登録があるか確認
             const registeredJKUUL = pairMaster[internalKey];
 
             if (!registeredJKUUL) {
-                // マスターに未登録の場合 ➔ 通常画面を隠し、登録専用ウィンドウを表示！
+                // データベース未登録の場合 ➔ 登録ウィンドウを表示
                 vibNG();
-                tempInternalData = internalData; // 社内ラベルデータを一時保持
-                currentPhase = "REG_WAIT_JKUUL"; // 登録待ち状態へ
+                tempInternalData = internalData; 
+                currentPhase = "REG_WAIT_JKUUL"; 
                 
                 document.getElementById('status').textContent = "【登録ウィンドウ起動】未登録の社内ラベルです";
                 switchToRegView(internalData);
@@ -233,7 +303,7 @@
                 return;
             }
 
-            // マスターに登録があった場合 ➔ 最初に読んだ「activeJKUULData」がマスターデータと一致するか照合
+            // データベースに登録があった場合 ➔ 紐づいているデータが「現在選択中のJKUUL」と完全一致するか照合
             const isPartOK = (registeredJKUUL.partNo === activeJKUULData.partNo);
             const isQtyOK = (registeredJKUUL.qty === activeJKUULData.qty);
             const finalOK = isPartOK && isQtyOK;
@@ -252,18 +322,17 @@
             return;
         }
 
-        // 【登録専用ウィンドウ内】未登録の社内ラベルに対応する、標準JKUULを読み込ませる状態
+        // 【登録ウィンドウ内】未登録の社内ラベルに対応する、標準JKUULを読み込ませる状態
         if (currentPhase === "REG_WAIT_JKUUL") {
             const jkuulData = parseJKUUL(text);
             const internalKey = createKey(tempInternalData);
 
-            // ペアとしてマスター辞書に保存
+            // データベースに保存
             pairMaster[internalKey] = jkuulData;
             
             addLog("紐づけ登録", "SUCCESS", `社内[${tempInternalData.partNo}] ➔ JKUUL[${jkuulData.partNo}]`);
             vibOK();
 
-            // 登録ウィンドウを閉じて、メインウィンドウに戻る
             tempInternalData = null;
             switchToMainView();
 
@@ -287,6 +356,7 @@
         }
         if(codeReader) codeReader.reset();
         document.getElementById('status').textContent = "停止しました";
+        document.getElementById("target-box").classList.add("hidden");
         clearOverlay();
     }
 
