@@ -19,7 +19,6 @@
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
         #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     </style>
-    <!-- 一瞬で読めた時の高性能ライブラリ(ZXing) -->
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
 <body>
@@ -101,26 +100,35 @@
         const octx = overlay.getContext("2d");
         octx.clearRect(0, 0, overlay.width, overlay.height);
 
-        // ブラウザのロック制限を壊すため、毎回「背面カメラ」を完全指定してストリームを毎回新規生成
+        // 高画質(1280x720)かつ、連続オートフォーカスを理想値(ideal)としてリクエスト
         const constraints = {
             video: {
-                facingMode: { ideal: "environment" }
+                facingMode: { ideal: "environment" },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                focusMode: { ideal: "continuous" }
             }
         };
 
         try {
-            // 過去の古いストリームの残骸を強制的に完全リセット
             const videoElement = document.getElementById('video');
             if (videoElement.srcObject) {
                 videoElement.srcObject.getTracks().forEach(track => track.stop());
                 videoElement.srcObject = null;
             }
 
-            // 新しく背面指定でカメラ権限を要求・取得
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             videoElement.srcObject = stream;
 
+            // 機種によっては起動後にフォーカスを当てる命令を上書きする
             setTimeout(() => {
+                try {
+                    const track = stream.getVideoTracks()[0];
+                    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+                    if (capabilities.focusMode && capabilities.focusMode.includes('continuous')) {
+                        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(e => console.log(e));
+                    }
+                } catch(e) { console.log("Focus override optional error:", e); }
                 scanReady = true;
             }, 1000);
 
@@ -133,7 +141,6 @@
 
         } catch (err) {
             console.error("Camera error: ", err);
-            // 失敗時のセーフティ（緩い背面指定）
             try {
                 const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
                 document.getElementById('video').srcObject = fallbackStream;
