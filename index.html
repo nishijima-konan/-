@@ -2,22 +2,19 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>QRラベル判定</title>
+    <title>QR判定</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body { font-family: sans-serif; padding: 10px; }
-        h1 { font-size: 22px; font-weight: bold; }
-        button { margin: 5px 0; padding: 10px 14px; font-size: 18px; width: 100%; }
-        #status { font-size: 18px; margin: 10px 0; color: #444; }
-        #result { margin-top: 10px; font-size: 26px; font-weight: bold; text-align: center; }
+        button { margin: 5px 0; padding: 12px; font-size: 18px; width: 100%; }
+        #status { font-size: 18px; margin: 10px 0; color: blue; font-weight: bold; }
+        #result { font-size: 26px; font-weight: bold; text-align: center; margin: 10px 0; }
         .ok { color: green; }
         .ng { color: red; }
-        #video-wrapper {width: 100%; max-width: 400px; margin: 10px auto; position: relative; }
-        #video {width: 100%; display: block; border-radius: 6px; transform: scaleX(1); }
-        #overlay {position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        #video-wrapper { width: 100%; max-width: 400px; margin: 10px auto; }
+        #video { width: 100%; display: block; border-radius: 6px; background: #000; }
         .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
-        .label { font-size: 14px; color: #555; margin-bottom: 5px; }
-        #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+        #log { font-size: 14px; white-space: pre-wrap; max-height: 150px; overflow-y: auto; background: #eee; padding: 5px; }
     </style>
     <script src="https://unpkg.com/@zxing/library@latest"></script>
 </head>
@@ -27,138 +24,86 @@
     <div id="status">停止中</div>
 
     <div class="box">
-        <div class="label">① 標準QR登録</div>
-        <button onclick="startScan('qr1ref')">QR1標準を読み取る</button>
-        <div id="qr1refText"></div>
-        <button onclick="startScan('qr2ref')">QR2標準を読み取る</button>
-        <div id="qr2refText"></div>
+        <button onclick="startScan('qr1ref')">① QR1標準を読み取る</button>
+        <div id="qr1refText" style="color:green; font-weight:bold;"></div>
+        <button onclick="startScan('qr2ref')">② QR2標準を読み取る</button>
+        <div id="qr2refText" style="color:green; font-weight:bold;"></div>
     </div>
 
     <div class="box">
-        <div class="label">② ラベル照合（自動ループ）</div>
-        <button onclick="startAuto()">照合開始（QR1→QR2→QR1…）</button>
-        <button onclick="stopScan()">停止</button>
+        <button onclick="startAuto()">③ 照合開始（ループ）</button>
+        <button onclick="stopScan()" style="background:#ccc;">スキャン停止</button>
         <div id="result"></div>
     </div>
 
     <div id="video-wrapper">
         <video id="video" autoplay playsinline></video>
-        <canvas id="overlay"></canvas>
     </div>
 
     <div class="box">
-        <div class="label">③ 読み取り履歴ログ</div>
+        <div>読み取り履歴ログ</div>
         <div id="log"></div>
     </div>
 
 <script>
-    let refQR1 = null;
-    let refQR2 = null;
-    let currentMode = null;
-    let autoMode = false;
-    let codeReader = null;
-    let selectedDeviceId = null;
-    let scanReady = false;
+    var refQR1 = null;
+    var refQR2 = null;
+    var currentMode = null;
+    var autoMode = false;
+    var codeReader = new ZXing.BrowserQRCodeReader();
+    var activeStream = null;
 
-    try {
-        codeReader = new ZXing.BrowserQRCodeReader();
-    } catch (e) {
-        console.error("ZXing error", e);
+    function parseQR1(t) {
+        if (!t) return { partNo: "", qty: "" };
+        var p = t.split(",");
+        if (p.length < 5) return { partNo: t.trim(), qty: "1" };
+        return { partNo: p[0].trim(), qty: p[4].trim() };
     }
 
-    function parseQR1(text) {
-        if (!text) return { partNo: "", qty: "" };
-        const parts = text.split(",", 5);
-        if (parts.length < 5) return { partNo: text.trim(), qty: "1" };
-        return { partNo: parts[0].trim(), qty: parts[4].trim() };
+    function parseQR2(t) {
+        if (!t) return { partNo: "", qty: "" };
+        var p = t.trim().split(/\s+/);
+        if (p.length < 12) return { partNo: t.trim(), qty: "1" };
+        return { partNo: p[1] + " " + p[2], qty: p[11].replace(/^0+/, "") };
     }
-
-    function parseQR2(text) {
-        if (!text) return { partNo: "", qty: "" };
-        const parts = text.trim().split(/\s+/);
-        if (parts.length < 12) return { partNo: text.trim(), qty: "1" };
-        return {
-            partNo: parts[1] + " " + parts[2],
-            qty: parts[11].replace(/^0+/, "")
-        };
-    }
-
-    function checkQR1(ref, qr1) { return ref && qr1 && ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
-    function checkQR2(ref, qr2) { return ref && qr2 && ref.partNo === qr2.partNo && ref.qty === qr2.qty; }
-
-    function vibOK() { if(navigator.vibrate) navigator.vibrate(100); }
-    function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
-    function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
     async function startScan(mode) {
         currentMode = mode;
-        scanReady = false;
         document.getElementById('status').textContent = mode + " 読み取り中…";
-        vibStart();
         
-        if (codeReader) codeReader.reset();
-        const overlay = document.getElementById("overlay");
-        const octx = overlay.getContext("2d");
-        octx.clearRect(0, 0, overlay.width, overlay.height);
+        // 以前のスキャンを完全に初期化
+        if (activeStream) {
+            activeStream.getTracks().forEach(track => track.stop());
+        }
+        codeReader.reset();
 
         try {
-            if (!selectedDeviceId) {
-                const videoInputDevices = await codeReader.listVideoInputDevices();
-                const backCamera = videoInputDevices.find(device => 
-                    device.label.toLowerCase().includes('back') || 
-                    device.label.toLowerCase().includes('environment')
-                );
-                selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
-            }
-
-            const constraints = {
+            // カメラ設定（最高画質をリクエスト）
+            var constraints = {
                 video: {
-                    deviceId: { exact: selectedDeviceId },
+                    facingMode: "environment",
                     width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    focusMode: { ideal: "continuous" }
+                    height: { ideal: 1080 }
                 }
             };
 
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            const videoElement = document.getElementById('video');
-            videoElement.srcObject = stream;
+            activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+            var videoElement = document.getElementById('video');
+            videoElement.srcObject = activeStream;
 
-            setTimeout(() => {
-                scanReady = true;
+            // 1秒間は完全にスキャン判定を無視して、カメラが安定してから解読を開始させる
+            setTimeout(function() {
+                codeReader.decodeFromStream(activeStream, 'video', function(result, err) {
+                    if (result && result.text) {
+                        // 読み取ったら即座に次の処理へ（ここではstopScanを呼ばずhandleScan内で制御）
+                        handleScan(result.text);
+                    }
+                });
             }, 1000);
 
-            codeReader.decodeFromStream(stream, 'video', (result, err) => {
-                if (result && scanReady) {
-                    if (result.resultPoints) drawBox(result.resultPoints);
-                    handleScan(result.text);
-                }
-            });
-
         } catch (err) {
-            console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "Camera Error";
+            document.getElementById('status').textContent = "カメラ起動エラー";
         }
-    }
-
-    function drawBox(points) {
-        const overlay = document.getElementById("overlay");
-        const video = document.getElementById("video");
-        overlay.width = video.clientWidth;
-        overlay.height = video.clientHeight;
-        const ctx = overlay.getContext("2d");
-        ctx.clearRect(0, 0, overlay.width, overlay.height);
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth = 4;
-        ctx.beginPath();
-        const scaleX = video.clientWidth / video.videoWidth;
-        const scaleY = video.clientHeight / video.videoHeight;
-        ctx.moveTo(points[0].getX() * scaleX, points[0].getY() * scaleY);
-        for(let i=1; i<points.length; i++) {
-            ctx.lineTo(points[i].getX() * scaleX, points[i].getY() * scaleY);
-        }
-        ctx.closePath();
-        ctx.stroke();
     }
 
     function startAuto() {
@@ -173,82 +118,76 @@
     function stopScan() {
         autoMode = false;
         currentMode = null;
-        scanReady = false;
-        const videoElement = document.getElementById('video');
-        if (videoElement && videoElement.srcObject) {
-            const stream = videoElement.srcObject;
-            const tracks = stream.getTracks();
-            tracks.forEach(track => track.stop());
-            videoElement.srcObject = null;
+        if (activeStream) {
+            activeStream.getTracks().forEach(track => track.stop());
+            activeStream = null;
         }
-        if(codeReader) codeReader.reset();
+        var videoElement = document.getElementById('video');
+        if (videoElement) videoElement.srcObject = null;
+        codeReader.reset();
         document.getElementById('status').textContent = "停止しました";
-        const overlay = document.getElementById("overlay");
-        overlay.getContext("2d").clearRect(0, 0, overlay.width, overlay.height);
     }
 
     function handleScan(text) {
         if (!text) return;
-        stopScan();
+        
+        // 重複防止のため、一旦カメラストリームの枠だけ残して解読を止める
+        codeReader.reset();
 
         if (currentMode === "qr1ref") {
             refQR1 = parseQR1(text);
-            document.getElementById("qr1refText").textContent = "QR1標準登録完了";
-            vibOK();
-            addLog("QR1標準", "OK", text);
+            document.getElementById("qr1refText").textContent = "QR1登録完了: " + refQR1.partNo;
+            stopScan();
+            addLog("QR1標準登録", "OK", text);
             return;
         }
         if (currentMode === "qr2ref") {
             refQR2 = parseQR2(text);
-            document.getElementById("qr2refText").textContent = "QR2標準登録完了";
-            vibOK();
-            addLog("QR2標準", "OK", text);
+            document.getElementById("qr2refText").textContent = "QR2登録完了: " + refQR2.partNo;
+            stopScan();
+            addLog("QR2標準登録", "OK", text);
             return;
         }
 
         if (autoMode) {
+            var r = document.getElementById("result");
             if (currentMode === "qr1") {
-                const qr1 = parseQR1(text);
-                const ok = checkQR1(refQR1, qr1);
-                showResult(ok, "QR1");
-                addLog("QR1", ok ? "OK" : "NG", text);
-                if (ok) {
-                    vibOK();
+                var qr1 = parseQR1(text);
+                if (refQR1 && refQR1.partNo === qr1.partNo && refQR1.qty === qr1.qty) {
+                    r.textContent = "QR1 OK"; r.className = "ok";
+                    addLog("QR1照合", "OK", text);
                     currentMode = "qr2";
-                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
+                    // 1.5秒後に次のQR2のスキャンに自動で進む
+                    setTimeout(function() { if(autoMode) startScan("qr2"); }, 1500);
                 } else {
-                    vibNG();
+                    r.textContent = "QR1 NG"; r.className = "ng";
+                    addLog("QR1照合", "NG (不一致)", text);
+                    setTimeout(function() { if(autoMode) startScan("qr1"); }, 2000);
                 }
                 return;
             }
             if (currentMode === "qr2") {
-                const qr2 = parseQR2(text);
-                const ok = checkQR2(refQR2, qr2);
-                showResult(ok, "QR2");
-                addLog("QR2", ok ? "OK" : "NG", text);
-                if (ok) {
-                    vibOK();
+                var qr2 = parseQR2(text);
+                if (refQR2 && refQR2.partNo === qr2.partNo && refQR2.qty === qr2.qty) {
+                    r.textContent = "QR2 OK"; r.className = "ok";
+                    addLog("QR2照合", "OK", text);
                     currentMode = "qr1";
-                    setTimeout(() => { if(autoMode) startScan(currentMode); }, 1200);
+                    // 1.5秒後にまたQR1のスキャンに自動で戻る
+                    setTimeout(function() { if(autoMode) startScan("qr1"); }, 1500);
                 } else {
-                    vibNG();
+                    r.textContent = "QR2 NG"; r.className = "ng";
+                    addLog("QR2照合", "NG (不一致)", text);
+                    setTimeout(function() { if(autoMode) startScan("qr2"); }, 2000);
                 }
                 return;
             }
         }
     }
 
-    function showResult(ok, label) {
-        const r = document.getElementById("result");
-        if (ok) { r.textContent = label + " OK"; r.className = "ok"; }
-        else { r.textContent = label + " NG"; r.className = "ng"; }
-    }
-
-    function addLog(type, result, text) {
-        const log = document.getElementById("log");
-        const time = new Date().toLocaleTimeString();
-        const cleanText = text.replace(/[\x00-\x1F\x7F-\x9F]/g, " ");
-        log.textContent = `[${time}] ${type} → ${result} : ${cleanText}\n` + log.textContent;
+    function addLog(type, res, txt) {
+        var log = document.getElementById("log");
+        var time = new Date().toLocaleTimeString();
+        log.textContent = "[" + time + "] " + type + " -> " + res + " (" + txt.substring(0,20) + "...)\n" + log.textContent;
     }
 </script>
 </body>
