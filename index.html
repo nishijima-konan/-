@@ -15,6 +15,8 @@
         .ng { color: red; background: #ffe6e6; border: 2px solid red; }
         #reader-wrapper { width: 100%; max-width: 380px; margin: 10px auto; overflow: hidden; border-radius: 8px; border: 2px solid #ccc; background: #000; }
         #reader { width: 100%; }
+        /* 読み取り枠（スキャンガイド）の線を太く見やすくする調整 */
+        #reader__scan_region { border: 3px solid #007bff !important; }
         .box { border: 1px solid #ddd; padding: 12px; margin-bottom: 12px; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .label { font-size: 13px; color: #666; font-weight: bold; margin-bottom: 6px; }
         .registered { color: #0066cc; font-weight: bold; margin-top: 4px; font-size: 14px; }
@@ -93,17 +95,18 @@
         
         await stopStreamOnly();
 
-        // 超高精度読み取りのためのエンジン設定
         html5QrcodeScanner = new Html5Qrcode("reader");
         const config = {
-            fps: 15, // 解析頻度を最適化
+            fps: 20, // 認識速度をアップ
             qrbox: function(viewfinderWidth, viewfinderHeight) {
-                // 画面の75%を読み取りエリアにして、細かいQRを捉えやすくする
+                // 【修正】枠を小さく（35%）して、スマホを近づけて大きく映せるように変更
                 const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                return { width: Math.floor(minEdge * 0.75), height: Math.floor(minEdge * 0.75) };
+                const boxSize = Math.floor(minEdge * 0.35);
+                // 小さすぎ防止（最低でも180px）
+                return { width: Math.max(boxSize, 180), height: Math.max(boxSize, 180) };
             },
             experimentalFeatures: {
-                useBarCodeDetectorIfSupported: true // スマホ内蔵のハードウェア加速を狙う
+                useBarCodeDetectorIfSupported: true
             }
         };
 
@@ -112,7 +115,7 @@
                 { facingMode: "environment" },
                 config,
                 (text) => { handleScanResult(text); },
-                (errorMessage) => { /* 読み取り失敗時はログを出さない（高速化のため） */ }
+                (errorMessage) => {}
             );
         } catch (err) {
             console.error("Camera error: ", err);
@@ -120,11 +123,10 @@
         }
     }
 
-    // チャタリング（連続重複読み込み）を防ぎつつ結果を処理
     function handleScanResult(text) {
         const now = Date.now();
         if (text === lastScannedText && (now - lastScannedTime) < 1500) {
-            return; // 1.5秒以内の全く同じデータは無視
+            return; 
         }
         lastScannedText = text;
         lastScannedTime = now;
@@ -152,7 +154,6 @@
             }
             html5QrcodeScanner = null;
         }
-        // 古いビデオタグが残っていれば掃除
         const readerDiv = document.getElementById("reader");
         if (readerDiv) readerDiv.innerHTML = "";
     }
