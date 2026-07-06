@@ -16,14 +16,14 @@
         #video {width: 100%; display: block; border-radius: 6px; }
         .box { border: 1px solid #ccc; padding: 10px; margin-bottom: 15px; border-radius: 6px; }
         .label { font-size: 14px; color: #555; margin-bottom: 5px; }
-        #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+        #log { font-size: 14px; margin-top: 10px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; background: #f9f9f9; padding: 5px; }
     </style>
     <!-- jsQRライブラリ -->
     <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 </head>
 <body>
 
-    <h1>QRラベル判定</h1>
+    <h1>QRラベル判定 (検証版)</h1>
     <div id="status">停止中</div>
 
     <div class="box">
@@ -65,19 +65,28 @@
 
     function parseQR1(text) {
         if (!text) return { partNo: "", qty: "" };
-        const parts = text.split(",", 5);
-        if (parts.length < 5) return { partNo: text.trim(), qty: "1" };
-        return { partNo: parts[0].trim(), qty: parts[4].trim() };
+        // 安全第一：カンマ分割でエラーが出ても絶対にフリーズさせない
+        try {
+            const parts = text.split(",");
+            if (parts.length >= 5) {
+                return { partNo: parts[0].trim(), qty: parts[4].trim() };
+            }
+        } catch(e) { console.error(e); }
+        return { partNo: text.trim(), qty: "1" };
     }
 
     function parseQR2(text) {
         if (!text) return { partNo: "", qty: "" };
-        const parts = text.trim().split(/\s+/);
-        if (parts.length < 12) return { partNo: text.trim(), qty: "1" };
-        return {
-            partNo: parts[1] + " " + parts[2],
-            qty: parts[11].replace(/^0+/, "")
-        };
+        try {
+            const parts = text.trim().split(/\s+/);
+            if (parts.length >= 12) {
+                return {
+                    partNo: parts[1] + " " + parts[2],
+                    qty: parts[11].replace(/^0+/, "")
+                };
+            }
+        } catch(e) { console.error(e); }
+        return { partNo: text.trim(), qty: "1" };
     }
 
     function checkQR1(ref, qr1) { return ref && qr1 && ref.partNo === qr1.partNo && ref.qty === qr1.qty; }
@@ -96,13 +105,12 @@
         
         stopStreamOnly();
 
-        // フルHD画質要求 ＋ オートフォーカス連続駆動の設定
+        // 確実性を上げるため、解像度をあえて標準的なHDに戻し、スマホ側の負荷を下げてピントを合わせやすくします
         const constraints = {
             video: { 
                 facingMode: "environment",
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-                focusMode: "continuous"
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
             }
         };
 
@@ -111,10 +119,9 @@
             localStream = await navigator.mediaDevices.getUserMedia(constraints);
             videoElement.srcObject = localStream;
 
-            // スマホのカメラレンズにピントを合わせるための猶予を少し延長
             setTimeout(() => {
                 scanReady = true;
-            }, 800);
+            }, 600);
 
             if (animationFrameId) cancelAnimationFrame(animationFrameId);
             animationFrameId = requestAnimationFrame(scanLoop);
@@ -135,14 +142,16 @@
             ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
             
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            
-            // 最高精度の両面解析モード
             const code = jsQR(imageData.data, imageData.width, imageData.height, {
                 inversionAttempts: "both",
             });
 
             if (code && code.data) {
                 isProcessing = true; 
+                
+                // 【最重要デバッグ】何はともあれ、キャッチした生データを緊急アラートとログに吐き出す
+                alert("QR検知しました！中身:\n" + code.data);
+                
                 handleScan(code.data); 
                 return; 
             }
@@ -189,7 +198,7 @@
 
         if (currentMode === "qr1ref") {
             refQR1 = parseQR1(text);
-            document.getElementById("qr1refText").textContent = "QR1標準登録完了";
+            document.getElementById("qr1refText").textContent = "QR1標準登録完了: " + refQR1.partNo;
             document.getElementById('status').textContent = "QR1登録完了";
             vibOK();
             addLog("QR1標準", "OK", text);
@@ -199,7 +208,7 @@
         }
         if (currentMode === "qr2ref") {
             refQR2 = parseQR2(text);
-            document.getElementById("qr2refText").textContent = "QR2標準登録完了";
+            document.getElementById("qr2refText").textContent = "QR2標準登録完了: " + refQR2.partNo;
             document.getElementById('status').textContent = "QR2登録完了";
             vibOK();
             addLog("QR2標準", "OK", text);
