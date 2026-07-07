@@ -44,8 +44,8 @@
         .action-btn:active { background: #e65100; }
     </style>
     
-    <!-- 【重要】オフラインで動作させるため、事前にダウンロードしたローカルJSを指定します -->
-    <script src="js/zxing-library.js"></script>
+    <!-- 【変更】管理を楽にするため、htmlと同じフォルダに置いた zxing-library.js を直接読み込みます -->
+    <script src="zxing-library.js"></script>
 </head>
 <body>
 
@@ -60,7 +60,7 @@
         <div id="result"></div>
     </div>
 
-    <!-- 社内ラベル紐づけ登録ウィンドウ（手動起動のみに変更） -->
+    <!-- 社内ラベル紐づけ登録ウィンドウ -->
     <div id="section-reg" class="mode-reg-window hidden">
         <div class="mode-reg-title">📝 社内ラベル 紐づけ登録（登録モード）</div>
         <div style="color: #e65100; font-weight: bold; font-size: 14px; margin-bottom: 12px; background: #fff3e0; padding: 8px; border-radius: 4px; border-left: 4px solid #ff9800;" id="reg-instructions">
@@ -104,7 +104,7 @@
             </table>
         </div>
         
-        <!-- 【新設】初期画面の下方に配置された紐づけ登録開始ボタン -->
+        <!-- 初期画面の下方に配置された紐づけ登録開始ボタン -->
         <button id="btn-open-reg" class="action-btn" onclick="startRegistrationMode()">➕ 新しいペアを紐づけ登録する</button>
     </div>
 
@@ -114,14 +114,12 @@
     </div>
 
 <script>
-    // 【オフライン対応】起動時にブラウザのLocalStorageからデータを読み込む（なければ空）
+    // 起動時にブラウザのLocalStorageからデータを読み込む
     let pairMaster = JSON.parse(localStorage.getItem("qr_pair_master")) || {};
 
-    // 現在の作業状態を管理
-    // STOPPED, WAIT_JKUUL_FIRST, WAIT_INTERNAL_LOOP, REG_STEP1_INTERNAL, REG_STEP2_JKUUL
     let currentPhase = "STOPPED"; 
-    let tempInternalData = null;  // 登録一時待避用
-    let activeJKUULData = null;   // 現在照合元として選択されているJKUULデータ
+    let tempInternalData = null;  
+    let activeJKUULData = null;   
     let codeReader = null;
     let selectedDeviceId = null;
     let isStreamActive = false;
@@ -135,17 +133,14 @@
         console.error("ZXing error", e);
     }
 
-    // アプリ起動時にデータベーステーブルを描画
     window.addEventListener('DOMContentLoaded', () => {
         updateDBTable();
     });
 
-    // LocalStorageへデータを安全に保存する共通関数
     function saveToStorage() {
         localStorage.setItem("qr_pair_master", JSON.stringify(pairMaster));
     }
 
-    // JKUUL用のパース処理（スペース区切り・数量可変対応版）
     function parseJKUUL(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.trim().split(/\s+/);
@@ -160,7 +155,6 @@
         return { partNo: partNo, qty: qty, raw: text };
     }
 
-    // 社内ラベル用のパース処理
     function parseInternal(text) {
         if (!text) return { partNo: "", qty: "", raw: "" };
         const parts = text.split(",", 5);
@@ -176,7 +170,6 @@
     function vibNG() { if(navigator.vibrate) navigator.vibrate([200, 100, 200]); }
     function vibStart() { if(navigator.vibrate) navigator.vibrate(50); }
 
-    // メイン照合開始
     async function startMainScan() {
         currentPhase = "WAIT_JKUUL_FIRST";
         document.getElementById('status').textContent = "【ステップ1】最初に「JKUUL」を一度だけ読み取ってください";
@@ -189,7 +182,6 @@
         if (!isStreamActive) { await startCameraStream(); }
     }
 
-    // 下方の「紐づけ登録ボタン」が押された時の処理
     async function startRegistrationMode() {
         currentPhase = "REG_STEP1_INTERNAL";
         document.getElementById('status').textContent = "【登録モード】社内ラベルをスキャンしてください";
@@ -217,7 +209,6 @@
         updateDBTable();
     }
 
-    // データベース表示の更新
     function updateDBTable() {
         const tbody = document.getElementById("db-list");
         tbody.innerHTML = "";
@@ -239,16 +230,16 @@
         });
     }
 
-    // ペアの削除機能
     function deletePair(key) {
         if(confirm("この登録ペアをデータベースから削除しますか？")) {
             delete pairMaster[key];
-            saveToStorage(); // 削除内容をブラウザに保存
+            saveToStorage(); 
             updateDBTable();
             addLog("データ削除", "INFO", key);
         }
     }
 
+    // 【大幅修正】柔軟に背面カメラを起動するための新しいカメラ処理
     async function startCameraStream() {
         if (codeReader) codeReader.reset();
         clearOverlay();
@@ -256,18 +247,23 @@
             if (!selectedDeviceId) {
                 const videoInputDevices = await codeReader.listVideoInputDevices();
                 const backCamera = videoInputDevices.find(device => 
-                    device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('environment')
+                    device.label.toLowerCase().includes('back') || 
+                    device.label.toLowerCase().includes('environment') ||
+                    device.label.toLowerCase().includes('背面')
                 );
-                selectedDeviceId = backCamera ? backCamera.deviceId : videoInputDevices[0].deviceId;
+                selectedDeviceId = backCamera ? backCamera.deviceId : (videoInputDevices[0] ? videoInputDevices[0].deviceId : null);
             }
+
+            // エラーを極力回避するため、制限を exact(絶対) から ideal(推奨値) に変更
             const constraints = {
                 video: {
-                    deviceId: { exact: selectedDeviceId },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 },
-                    focusMode: { ideal: "continuous" }
+                    deviceId: selectedDeviceId ? { ideal: selectedDeviceId } : undefined,
+                    facingMode: { ideal: "environment" }, // スマートフォンの背面カメラを最優先
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
                 }
             };
+
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             const videoElement = document.getElementById('video');
             videoElement.srcObject = stream;
@@ -285,14 +281,14 @@
             });
         } catch (err) {
             console.error("Camera error: ", err);
-            document.getElementById('status').textContent = "カメラ起動エラー";
+            // 起動に失敗した場合、原因を分かりやすく画面上部のステータスに表示します
+            document.getElementById('status').textContent = "カメラ起動エラー: " + err.name + " (" + err.message + ")";
         }
     }
 
     function handleScan(text) {
         if (!text) return;
 
-        // 【ステップ1】通常モード：基準となる JKUUL を読み取る
         if (currentPhase === "WAIT_JKUUL_FIRST") {
             activeJKUULData = parseJKUUL(text);
             addLog("JKUUL読込", "OK", text);
@@ -308,7 +304,6 @@
             return;
         }
 
-        // 【ステップ2】通常モード：社内ラベルを次々と読み込んで判定する
         if (currentPhase === "WAIT_INTERNAL_LOOP") {
             const internalData = parseInternal(text);
             const internalKey = createKey(internalData);
@@ -317,7 +312,6 @@
 
             const registeredJKUUL = pairMaster[internalKey];
             
-            // ★変更：未登録の場合、自動起動せずエラー警告（NG）のみ表示
             if (!registeredJKUUL) {
                 vibNG();
                 showResult(false, "未登録エラー");
@@ -327,7 +321,6 @@
                 return;
             }
 
-            // 登録があった場合の完全一致照合
             const isPartOK = (registeredJKUUL.partNo === activeJKUULData.partNo);
             const isQtyOK = (registeredJKUUL.qty === activeJKUULData.qty);
             const finalOK = isPartOK && isQtyOK;
@@ -346,9 +339,6 @@
             return;
         }
 
-        // ─── 以下、新設した「手動紐づけ登録モード」の処理 ───
-
-        // 【登録モード・ステップ1】社内ラベルの読取待ち
         if (currentPhase === "REG_STEP1_INTERNAL") {
             tempInternalData = parseInternal(text);
             vibOK();
@@ -363,12 +353,10 @@
             return;
         }
 
-        // 【登録モード・ステップ2】対応するJKUULの読取・確定
         if (currentPhase === "REG_STEP2_JKUUL") {
             const jkuulData = parseJKUUL(text);
             const internalKey = createKey(tempInternalData);
             
-            // データベース（オブジェクト型）に保存し、LocalStorageにも同期
             pairMaster[internalKey] = jkuulData;
             saveToStorage(); 
 
@@ -379,7 +367,7 @@
             
             tempInternalData = null;
             switchToMainView();
-            stopScan(); // 一旦カメラを止めて初期状態に戻します
+            stopScan(); 
             return;
         }
     }
